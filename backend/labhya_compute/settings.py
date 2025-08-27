@@ -177,3 +177,9 @@ SIMPLE_JWT = {
 # CORS Settings
 CORS_ALLOW_ALL_ORIGINS = True  # For development only
 CORS_ALLOW_CREDENTIALS = True
+
+# Reverse SSH Relay configuration (development defaults)
+# Hostname or IP where renters connect (your relay/bastion server)
+RELAY_HOST = 'localhost'
+# Allowed relay port range reserved for reverse SSH tunnels
+RELAY_PORT_RANGE = (8001, 8999)

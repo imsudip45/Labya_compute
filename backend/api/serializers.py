@@ -107,9 +107,8 @@ class SessionSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'total_cost', 'ssh_connection_string', 'session_duration']
-        extra_kwargs = {
-            'ssh_password': {'write_only': True}
-        }
+        # Expose ssh_password so renter/host can see it when provided by agent
+        extra_kwargs = {}
     
     def get_total_cost(self, obj):
         return obj.total_cost
@@ -119,6 +118,8 @@ class SessionSerializer(serializers.ModelSerializer):
     
     def get_session_duration(self, obj):
         from django.utils import timezone
+        if obj.start_time is None:
+            return 0
         if obj.end_time:
             duration = obj.end_time - obj.start_time
         else:
@@ -181,7 +182,7 @@ class SessionDetailSerializer(serializers.ModelSerializer):
         model = Session
         fields = [
             'id', 'gpu', 'renter', 'host', 'start_time', 'end_time', 'status',
-            'connection_status', 'ssh_host', 'ssh_port', 'ssh_username',
+            'connection_status', 'ssh_host', 'ssh_port', 'ssh_username', 'ssh_password',
             'connection_error', 'last_connected', 'gpu_utilization',
             'memory_utilization', 'temperature', 'is_auto_reconnect',
             'payment_transaction', 'total_cost', 'ssh_connection_string',
@@ -197,6 +198,8 @@ class SessionDetailSerializer(serializers.ModelSerializer):
     
     def get_session_duration(self, obj):
         from django.utils import timezone
+        if obj.start_time is None:
+            return 0
         if obj.end_time:
             duration = obj.end_time - obj.start_time
         else:
