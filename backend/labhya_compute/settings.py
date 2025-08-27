@@ -84,7 +84,7 @@ DATABASES = {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": "labhya_compute",
         "USER": "labhya_user",
-        "PASSWORD": "your_secure_password",  # Change this to a secure password
+        "PASSWORD": "labhya_secure_2024",  # Password set in deployment script
         "HOST": "localhost",
         "PORT": "5432",
     }
