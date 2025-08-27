@@ -218,7 +218,7 @@ class AgentGUI:
         self.root.configure(bg='#f0f0f0')
         
         # Configuration
-        self.api_base = "http://localhost:8000/api"
+        self.api_base = "http://65.0.7.162:8000/api"
         self.token = None
         self.refresh_token = None
         self.host_id = None

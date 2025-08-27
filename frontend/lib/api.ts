@@ -7,8 +7,7 @@ import type {
   DashboardStats,
   LoginResponse,
   RegisterResponse,
-  UserRole,
-  ApiError 
+  UserRole
 } from './types'
 import { useAuthStore } from './auth-store'
 

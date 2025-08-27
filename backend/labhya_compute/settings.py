@@ -23,9 +23,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = "django-insecure-d%1f35fzt!x$*(v&+_j^tkmne6eka8u9sj#d3ox@-72p58ore$"
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['65.0.7.162', 'localhost', '127.0.0.1']
 
 
 # Application definition
@@ -81,8 +81,12 @@ WSGI_APPLICATION = "labhya_compute.wsgi.application"
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": "labhya_compute",
+        "USER": "labhya_user",
+        "PASSWORD": "your_secure_password",  # Change this to a secure password
+        "HOST": "localhost",
+        "PORT": "5432",
     }
 }
 
@@ -175,11 +179,17 @@ SIMPLE_JWT = {
 }
 
 # CORS Settings
-CORS_ALLOW_ALL_ORIGINS = True  # For development only
+CORS_ALLOW_ALL_ORIGINS = False  # More secure for production
+CORS_ALLOWED_ORIGINS = [
+    "http://65.0.7.162",
+    "https://65.0.7.162",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 CORS_ALLOW_CREDENTIALS = True
 
-# Reverse SSH Relay configuration (development defaults)
+# Reverse SSH Relay configuration (EC2 production)
 # Hostname or IP where renters connect (your relay/bastion server)
-RELAY_HOST = 'localhost'
+RELAY_HOST = '65.0.7.162'
 # Allowed relay port range reserved for reverse SSH tunnels
 RELAY_PORT_RANGE = (8001, 8999)
