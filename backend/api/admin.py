@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Renter, Host, Wallet, Transaction, GPU, Session
+from .models import Renter, Host, Wallet, Transaction, GPU, Session, RelayPort
 
 # Register your models here.
 
@@ -112,3 +112,10 @@ class SessionAdmin(admin.ModelAdmin):
 admin.site.site_header = "Labhya Compute Admin"
 admin.site.site_title = "Labhya Compute Admin Portal"
 admin.site.index_title = "Welcome to Labhya Compute Admin Portal"
+
+@admin.register(RelayPort)
+class RelayPortAdmin(admin.ModelAdmin):
+    list_display = ('port', 'status', 'leased_to_session', 'leased_at', 'released_at')
+    search_fields = ('port', 'status', 'notes')
+    list_filter = ('status', 'leased_at', 'released_at', 'created_at')
+    ordering = ('port',)

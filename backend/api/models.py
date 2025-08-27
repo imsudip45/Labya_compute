@@ -4,6 +4,7 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from decimal import Decimal
 from django.contrib.auth.models import User
+from django.utils import timezone
 
 # Create your models here.
 class Renter(models.Model):
@@ -203,7 +204,7 @@ class Session(models.Model):
     host = models.ForeignKey(Host, on_delete=models.CASCADE)
     
     # Session timing
-    start_time = models.DateTimeField()
+    start_time = models.DateTimeField(null=True, blank=True)
     end_time = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=SESSION_STATUS, default='PENDING')
     
@@ -240,6 +241,8 @@ class Session(models.Model):
     @property
     def total_cost(self):
         """Calculate total cost based on session duration and GPU price"""
+        if self.start_time is None:
+            return 0
         if not self.end_time:
             # Session is still active, calculate cost up to now
             from django.utils import timezone
@@ -328,4 +331,68 @@ class Session(models.Model):
             'start_time': self.start_time,
             'end_time': self.end_time,
         }
+
+
+class RelayPort(models.Model):
+    """Represents a port on the relay server leased for a reverse SSH tunnel.
+
+    The agent running on a host will open: ssh -R <port>:container_ip:22 relay@RELAY_HOST
+    Renter connects via: ssh -p <port> <user>@RELAY_HOST
+    """
+    STATUS_CHOICES = [
+        ('FREE', 'Free'),
+        ('LEASED', 'Leased'),
+        ('RESERVED', 'Reserved'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    port = models.PositiveIntegerField(unique=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='FREE')
+    leased_to_session = models.OneToOneField('Session', on_delete=models.SET_NULL, null=True, blank=True, related_name='relay_port')
+    leased_at = models.DateTimeField(null=True, blank=True)
+    released_at = models.DateTimeField(null=True, blank=True)
+    notes = models.CharField(max_length=255, null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"RelayPort {self.port} - {self.status}"
+
+    @classmethod
+    def lease_free_port(cls, session_obj: 'Session', start_port: int, end_port: int) -> 'RelayPort':
+        """Find or create a free port within the range and lease it to the session."""
+        # Try to find an existing FREE port in range
+        free_port = (
+            cls.objects.select_for_update()
+            .filter(status='FREE', port__gte=start_port, port__lte=end_port)
+            .order_by('port')
+            .first()
+        )
+        if free_port is None:
+            # Create a new port number by scanning the range for first unused
+            used = set(
+                cls.objects.filter(port__gte=start_port, port__lte=end_port).values_list('port', flat=True)
+            )
+            chosen = None
+            for p in range(start_port, end_port + 1):
+                if p not in used:
+                    chosen = p
+                    break
+            if chosen is None:
+                raise ValueError("No relay ports available in the configured range")
+            free_port = cls.objects.create(port=chosen, status='FREE')
+
+        free_port.status = 'LEASED'
+        free_port.leased_to_session = session_obj
+        free_port.leased_at = timezone.now()
+        free_port.released_at = None
+        free_port.save()
+        return free_port
+
+    def release(self):
+        self.status = 'FREE'
+        self.released_at = timezone.now()
+        self.leased_to_session = None
+        self.save()
 
