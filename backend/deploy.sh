@@ -48,6 +48,10 @@ echo "🗃️ Running database migrations..."
 python manage.py makemigrations
 python manage.py migrate
 
+# Collect static files
+echo "📁 Collecting static files..."
+python manage.py collectstatic --noinput
+
 # Create superuser (optional)
 echo "👤 Creating superuser..."
 echo "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.create_superuser('admin', 'admin@labhya.com', 'admin123') if not User.objects.filter(username='admin').exists() else None" | python manage.py shell
