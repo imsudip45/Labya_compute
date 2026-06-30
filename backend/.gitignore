@@ -1,1 +1,22 @@
-venv
+# Python virtualenv
+venv/
+.venv/
+env/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Django database
+*.sqlite3
+db.sqlite3-journal
+
+# Django static files
+staticfiles/
+
+# System / IDE
+.DS_Store
+.vscode/
+.idea/
+*.log
