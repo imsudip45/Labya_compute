@@ -794,7 +794,7 @@ class DashboardStatsView(APIView):
 
 
 class AvailableGPUsView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
     
     def get(self, request):
         """Get all available GPUs for rent"""
