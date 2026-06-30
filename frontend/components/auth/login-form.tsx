@@ -36,17 +36,6 @@ export function LoginForm() {
       setLoading(false)
     }
   }
-
-  const fillHostCredentials = () => {
-    setEmail("host@test.com")
-    setPassword("testpass123")
-  }
-
-  const fillRenterCredentials = () => {
-    setEmail("renter@test.com")
-    setPassword("testpass123")
-  }
-
   return (
     <Card className="w-full max-w-md">
       <CardHeader className="text-center">
@@ -54,23 +43,6 @@ export function LoginForm() {
         <CardDescription>Sign in to your Labhya Compute account</CardDescription>
       </CardHeader>
       <CardContent>
-        <Alert className="mb-4">
-          <Info className="h-4 w-4" />
-          <AlertDescription>
-            <div className="space-y-2">
-              <p className="font-medium">Demo Credentials:</p>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={fillHostCredentials}>
-                  Host Login
-                </Button>
-                <Button variant="outline" size="sm" onClick={fillRenterCredentials}>
-                  Renter Login
-                </Button>
-              </div>
-            </div>
-          </AlertDescription>
-        </Alert>
-
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
             <Alert variant="destructive">
