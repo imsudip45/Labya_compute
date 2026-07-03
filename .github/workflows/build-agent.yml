@@ -3,8 +3,6 @@ name: Build & Deploy Desktop Agent
 on:
   push:
     branches: [ main ]
-    paths:
-      - 'backend/agent/agent_gui.py'
 
 jobs:
   build-agent-windows:
