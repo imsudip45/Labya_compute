@@ -26,4 +26,4 @@ COPY . /app/
 EXPOSE 8000
 
 # Run entrypoint script or direct command
-CMD ["gunicorn", "labhya_compute.wsgi:application", "--bind", "0.0.0.0:8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
