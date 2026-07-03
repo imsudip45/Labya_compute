@@ -1,5 +1,5 @@
 import uuid
-from django.db import models
+from django.db import models, transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from decimal import Decimal
@@ -22,36 +22,38 @@ class Renter(models.Model):
     
     def add_money(self, amount, description="Deposit"):
         """Add money to renter's wallet"""
-        wallet = self.get_wallet()
-        wallet.balance += Decimal(str(amount))
-        wallet.save()
-        
-        # Create transaction record
-        Transaction.objects.create(
-            wallet=wallet,
-            transaction_type='DEPOSIT',
-            amount=amount,
-            description=description
-        )
-        return wallet.balance
+        with transaction.atomic():
+            wallet = self.get_wallet()
+            wallet.balance += Decimal(str(amount))
+            wallet.save()
+            
+            # Create transaction record
+            Transaction.objects.create(
+                wallet=wallet,
+                transaction_type='DEPOSIT',
+                amount=amount,
+                description=description
+            )
+            return wallet.balance
     
     def pay_for_rental(self, amount, description="Rental payment"):
         """Pay for GPU rental"""
-        wallet = self.get_wallet()
-        if wallet.balance < Decimal(str(amount)):
-            raise ValueError("Insufficient balance")
-        
-        wallet.balance -= Decimal(str(amount))
-        wallet.save()
-        
-        # Create transaction record
-        Transaction.objects.create(
-            wallet=wallet,
-            transaction_type='RENTAL_PAYMENT',
-            amount=amount,
-            description=description
-        )
-        return wallet.balance
+        with transaction.atomic():
+            wallet = self.get_wallet()
+            if wallet.balance < Decimal(str(amount)):
+                raise ValueError("Insufficient balance")
+            
+            wallet.balance -= Decimal(str(amount))
+            wallet.save()
+            
+            # Create transaction record
+            Transaction.objects.create(
+                wallet=wallet,
+                transaction_type='RENTAL_PAYMENT',
+                amount=amount,
+                description=description
+            )
+            return wallet.balance
 
 class Host(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -68,36 +70,38 @@ class Host(models.Model):
     
     def add_earning(self, amount, description="Rental earning"):
         """Add earning from GPU rental"""
-        wallet = self.get_wallet()
-        wallet.balance += Decimal(str(amount))
-        wallet.save()
-        
-        # Create transaction record
-        Transaction.objects.create(
-            wallet=wallet,
-            transaction_type='RENTAL_EARNING',
-            amount=amount,
-            description=description
-        )
-        return wallet.balance
+        with transaction.atomic():
+            wallet = self.get_wallet()
+            wallet.balance += Decimal(str(amount))
+            wallet.save()
+            
+            # Create transaction record
+            Transaction.objects.create(
+                wallet=wallet,
+                transaction_type='RENTAL_EARNING',
+                amount=amount,
+                description=description
+            )
+            return wallet.balance
     
     def withdraw_money(self, amount, description="Withdrawal"):
         """Withdraw money from host's wallet"""
-        wallet = self.get_wallet()
-        if wallet.balance < Decimal(str(amount)):
-            raise ValueError("Insufficient balance")
-        
-        wallet.balance -= Decimal(str(amount))
-        wallet.save()
-        
-        # Create transaction record
-        Transaction.objects.create(
-            wallet=wallet,
-            transaction_type='WITHDRAWAL',
-            amount=amount,
-            description=description
-        )
-        return wallet.balance
+        with transaction.atomic():
+            wallet = self.get_wallet()
+            if wallet.balance < Decimal(str(amount)):
+                raise ValueError("Insufficient balance")
+            
+            wallet.balance -= Decimal(str(amount))
+            wallet.save()
+            
+            # Create transaction record
+            Transaction.objects.create(
+                wallet=wallet,
+                transaction_type='WITHDRAWAL',
+                amount=amount,
+                description=description
+            )
+            return wallet.balance
 
 class Wallet(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -260,25 +264,26 @@ class Session(models.Model):
     
     def process_payment(self):
         """Process payment for this session"""
-        total_cost = self.total_cost
-        
-        # Renter pays for the rental
-        self.renter.pay_for_rental(
-            amount=total_cost,
-            description=f"Payment for {self.gpu.gpu_name} rental"
-        )
-        
-        # Host receives the earning
-        self.host.add_earning(
-            amount=total_cost,
-            description=f"Earning from {self.gpu.gpu_name} rental"
-        )
-        
-        # Update session status
-        self.status = 'COMPLETED'
-        self.save()
-        
-        return total_cost
+        with transaction.atomic():
+            total_cost = self.total_cost
+            
+            # Renter pays for the rental
+            self.renter.pay_for_rental(
+                amount=total_cost,
+                description=f"Payment for {self.gpu.gpu_name} rental"
+            )
+            
+            # Host receives the earning
+            self.host.add_earning(
+                amount=total_cost,
+                description=f"Earning from {self.gpu.gpu_name} rental"
+            )
+            
+            # Update session status
+            self.status = 'COMPLETED'
+            self.save()
+            
+            return total_cost
     
     def get_ssh_connection_string(self):
         """Get SSH connection string for the session"""
@@ -362,33 +367,34 @@ class RelayPort(models.Model):
     @classmethod
     def lease_free_port(cls, session_obj: 'Session', start_port: int, end_port: int) -> 'RelayPort':
         """Find or create a free port within the range and lease it to the session."""
-        # Try to find an existing FREE port in range
-        free_port = (
-            cls.objects.select_for_update()
-            .filter(status='FREE', port__gte=start_port, port__lte=end_port)
-            .order_by('port')
-            .first()
-        )
-        if free_port is None:
-            # Create a new port number by scanning the range for first unused
-            used = set(
-                cls.objects.filter(port__gte=start_port, port__lte=end_port).values_list('port', flat=True)
+        with transaction.atomic():
+            # Try to find an existing FREE port in range
+            free_port = (
+                cls.objects.select_for_update()
+                .filter(status='FREE', port__gte=start_port, port__lte=end_port)
+                .order_by('port')
+                .first()
             )
-            chosen = None
-            for p in range(start_port, end_port + 1):
-                if p not in used:
-                    chosen = p
-                    break
-            if chosen is None:
-                raise ValueError("No relay ports available in the configured range")
-            free_port = cls.objects.create(port=chosen, status='FREE')
+            if free_port is None:
+                # Create a new port number by scanning the range for first unused
+                used = set(
+                    cls.objects.filter(port__gte=start_port, port__lte=end_port).values_list('port', flat=True)
+                )
+                chosen = None
+                for p in range(start_port, end_port + 1):
+                    if p not in used:
+                        chosen = p
+                        break
+                if chosen is None:
+                    raise ValueError("No relay ports available in the configured range")
+                free_port = cls.objects.create(port=chosen, status='FREE')
 
-        free_port.status = 'LEASED'
-        free_port.leased_to_session = session_obj
-        free_port.leased_at = timezone.now()
-        free_port.released_at = None
-        free_port.save()
-        return free_port
+            free_port.status = 'LEASED'
+            free_port.leased_to_session = session_obj
+            free_port.leased_at = timezone.now()
+            free_port.released_at = None
+            free_port.save()
+            return free_port
 
     def release(self):
         self.status = 'FREE'
