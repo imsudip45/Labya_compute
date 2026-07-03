@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import Optional, List
 
 class Settings(BaseSettings):
     postgres_db: str = "labhya_compute"
@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     relay_host: str = "localhost"
     relay_port_range_start: int = 8001
     relay_port_range_end: int = 8999
+    cors_allowed_origins: str = "*"
 
     @property
     def get_database_url(self) -> str:
@@ -24,6 +25,12 @@ class Settings(BaseSettings):
                 url = url.replace("postgres://", "postgresql://", 1)
             return url
         return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.db_host}:{self.db_port}/{self.postgres_db}"
+
+    @property
+    def get_cors_origins(self) -> List[str]:
+        if not self.cors_allowed_origins:
+            return ["*"]
+        return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
     class Config:
         env_file = ".env"
