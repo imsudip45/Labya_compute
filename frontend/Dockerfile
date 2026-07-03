@@ -2,6 +2,11 @@
 FROM node:18-alpine AS builder
 WORKDIR /app
 
+# Add build arguments for Next.js build-time env baking
+ARG NEXT_PUBLIC_API_URL=http://localhost:8080/api
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+
 # Install dependencies based on package-lock.json
 COPY package*.json ./
 RUN npm ci
