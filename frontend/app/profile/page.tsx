@@ -12,7 +12,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { useAuthStore } from "@/lib/auth-store"
 import { useAppStore } from "@/lib/app-store"
-import { Mail, Phone, MapPin, Calendar, Edit, Save, X } from "lucide-react"
+import { Mail, Phone, MapPin, Calendar, Edit, Save, X, Server } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
 export default function ProfilePage() {
@@ -136,6 +136,33 @@ export default function ProfilePage() {
                 )}
               </CardContent>
             </Card>
+
+            {role === "HOST" && (
+              <Card className="mt-6 border-indigo-500/20 bg-indigo-950/5">
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Server className="h-5 w-5 text-indigo-500" />
+                    Desktop Host Agent
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    To host and lease out your GPU computing resources, download and run the standalone desktop client.
+                  </p>
+                  <a href="/downloads/LabhyaComputeAgent.exe" download>
+                    <Button className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium">
+                      Download Agent (.exe)
+                    </Button>
+                  </a>
+                  <div className="text-[10px] text-muted-foreground pt-2 space-y-1">
+                    <p className="font-semibold text-xs text-foreground">Quick Setup Instructions:</p>
+                    <p>1. Ensure WSL2 & Docker Desktop are running.</p>
+                    <p>2. Start the executable client on your system.</p>
+                    <p>3. Authenticate with your Host credentials.</p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Profile Form */}
             <Card className="lg:col-span-2">

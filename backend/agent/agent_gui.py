@@ -177,6 +177,8 @@ CMD ["/usr/sbin/sshd","-D"]
             if not host_port:
                 host_port = _choose_free_port()
             name = f"sess-{session_id[:8]}"
+            # Remove container with same name if exists to prevent conflicts
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True, text=True)
             # Run container
             run = subprocess.run([
                 "docker", "run", "-d", "-p", f"{host_port}:22", "--name", name, image_tag
@@ -206,7 +208,10 @@ CMD ["/usr/sbin/sshd","-D"]
         except Exception:
             return None
     def generate_password(*args, **kwargs):
-        return "fallback-password"
+        import secrets
+        import string
+        alphabet = string.ascii_letters + string.digits
+        return "".join(secrets.choice(alphabet) for _ in range(12))
     def get_available_templates(*args, **kwargs):
         return {}
 
@@ -1253,8 +1258,7 @@ class AgentGUI:
     
     def _get_free_port(self):
         """Get a free port for container"""
-        import random
-        return random.randint(20000, 30000)
+        return _choose_free_port()
     
     def _update_session_status(self, session_id, status, password=None):
         """Update session status in backend"""
