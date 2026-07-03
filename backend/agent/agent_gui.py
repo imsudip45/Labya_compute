@@ -471,20 +471,20 @@ class AgentGUI:
                             self._log(f"Checking Docker status... ({i+1}/6)")
                             docker_running = self._check_docker()
                             if docker_running:
-                                self._log("✅ Docker Desktop is now running")
+                                self._log("[SUCCESS] Docker Desktop is now running")
                                 break
                         else:
-                            self._log("⚠️ Docker Desktop may still be starting up")
+                            self._log("[WARNING] Docker Desktop may still be starting up")
                 
                 self.root.after(0, lambda: self._update_status(self.docker_status, "Docker", docker_running))
                 
                 self.prereq_ok = wsl_ok and ubuntu_ok and docker_installed and docker_running
                 
                 if self.prereq_ok:
-                    self._log("✅ All prerequisites satisfied")
+                    self._log("[SUCCESS] All prerequisites satisfied")
                     self.root.after(0, self._enable_login)
                 else:
-                    self._log("❌ Some prerequisites are missing")
+                    self._log("[ERROR] Some prerequisites are missing")
                     missing = []
                     if not wsl_ok:
                         missing.append('WSL2')
@@ -495,11 +495,11 @@ class AgentGUI:
                     elif not docker_running:
                         missing.append('Docker (start it)')
                     
-                    self._log(f"⚠️ Missing: {', '.join(missing)}")
+                    self._log(f"[WARNING] Missing: {', '.join(missing)}")
                     
                     # Add debug info for Ubuntu detection
                     if wsl_ok and not ubuntu_ok:
-                        self._log("⚠️ WSL2 detected but Ubuntu not found. Debug info:")
+                        self._log("[WARNING] WSL2 detected but Ubuntu not found. Debug info:")
                         self._debug_wsl_installations()
                     
                     # Show setup button if prerequisites are missing
@@ -538,17 +538,17 @@ class AgentGUI:
             for i, method in enumerate(detection_methods, 1):
                 try:
                     if method():
-                        self._log(f"✅ Ubuntu detected using method {i}")
+                        self._log(f"[SUCCESS] Ubuntu detected using method {i}")
                         return True
                 except Exception as e:
                     self._log(f"Method {i} failed: {e}")
                     continue
             
-            self._log("❌ Ubuntu distribution not found with any method")
+            self._log("[ERROR] Ubuntu distribution not found with any method")
             return False
             
         except Exception as e:
-            self._log(f"❌ Unable to query WSL distributions: {e}")
+            self._log(f"[ERROR] Unable to query WSL distributions: {e}")
             return False
     
     def _check_ubuntu_quiet_list(self):
@@ -636,13 +636,13 @@ class AgentGUI:
                         # For 'version' command, check if server info is present
                         if cmd == ['version']:
                             if 'Server:' in result.stdout:
-                                self._log("✅ Docker Desktop is fully running")
+                                self._log("[SUCCESS] Docker Desktop is fully running")
                                 return True
                             else:
-                                self._log("⚠️ Docker client available but server not ready")
+                                self._log("[WARNING] Docker client available but server not ready")
                                 continue
                         else:
-                            self._log("✅ Docker Desktop is running")
+                            self._log("[SUCCESS] Docker Desktop is running")
                             return True
                 except Exception as e:
                     self._log(f"Docker command {' '.join(cmd)} failed: {e}")
@@ -688,12 +688,12 @@ class AgentGUI:
         try:
             r = subprocess.run([self._docker_cmd(), "--version"], capture_output=True, text=True)
             if r.returncode == 0:
-                self._log(f"✅ Docker installed: {r.stdout.strip()}")
+                self._log(f"[SUCCESS] Docker installed: {r.stdout.strip()}")
                 return True
-            self._log("❌ Docker not installed")
+            self._log("[ERROR] Docker not installed")
             return False
         except FileNotFoundError:
-            self._log("❌ Docker not installed")
+            self._log("[ERROR] Docker not installed")
             return False
     
     def _start_docker_desktop(self):
@@ -715,7 +715,7 @@ class AgentGUI:
                                        stderr=subprocess.DEVNULL, 
                                        shell=True,
                                        creationflags=subprocess.CREATE_NEW_CONSOLE)
-                        self._log("✅ Docker Desktop startup initiated")
+                        self._log("[SUCCESS] Docker Desktop startup initiated")
                         return True
                     except Exception as e:
                         self._log(f"Failed to start Docker Desktop at {exe}: {e}")
@@ -727,14 +727,14 @@ class AgentGUI:
                 result = subprocess.run(["net", "start", "com.docker.service"], 
                              capture_output=True, text=True, timeout=10)
                 if result.returncode == 0:
-                    self._log("✅ Docker service started")
+                    self._log("[SUCCESS] Docker service started")
                     return True
                 else:
                     self._log(f"Failed to start Docker service: {result.stderr}")
             except Exception as e:
                 self._log(f"Failed to start Docker service: {e}")
             
-            self._log("❌ Could not start Docker Desktop automatically")
+            self._log("[ERROR] Could not start Docker Desktop automatically")
             return False
         except Exception as e:
             self._log(f"Unable to auto-start Docker Desktop: {e}")
@@ -783,9 +783,9 @@ class AgentGUI:
     def _update_status(self, label, name, status):
         """Update status label"""
         if status:
-            label.config(text=f"{name}: ✅ Available", foreground="green")
+            label.config(text=f"{name}: [SUCCESS] Available", foreground="green")
         else:
-            label.config(text=f"{name}: ❌ Not Available", foreground="red")
+            label.config(text=f"{name}: [ERROR] Not Available", foreground="red")
     
     def _enable_login(self):
         """Enable login controls"""
@@ -891,7 +891,7 @@ class AgentGUI:
             self.refresh_token = data.get("refresh")
             if not self.token:
                 raise RuntimeError("No access token in response")
-            self._log("✅ Login successful")
+            self._log("[SUCCESS] Login successful")
             
             # Get host info
             self._get_host_info()
@@ -900,7 +900,7 @@ class AgentGUI:
             self._enable_post_login()
             
         except Exception as e:
-            self._log(f"❌ Login failed: {str(e)}")
+            self._log(f"[ERROR] Login failed: {str(e)}")
             messagebox.showerror("Login Failed", f"Login failed: {str(e)}")
             self.progress_var.set("Login failed")
     
@@ -915,13 +915,13 @@ class AgentGUI:
             # Our API returns the current host profile object (not a list)
             if isinstance(data, dict) and data.get("id"):
                 self.host_id = data["id"]
-                self._log(f"✅ Host ID: {self.host_id}")
+                self._log(f"[SUCCESS] Host ID: {self.host_id}")
                 # Load GPU info
                 self._load_gpu_info()
             else:
-                self._log("⚠️ No host profile found for this user")
+                self._log("[WARNING] No host profile found for this user")
         except Exception as e:
-            self._log(f"❌ Failed to get host info: {str(e)}")
+            self._log(f"[ERROR] Failed to get host info: {str(e)}")
     
     def _load_gpu_info(self):
         """Load GPU information"""
@@ -944,14 +944,14 @@ class AgentGUI:
                 self.gpu_info_text.delete(1.0, tk.END)
                 self.gpu_info_text.insert(1.0, gpu_info)
                 
-                self._log(f"✅ GPU loaded: {gpu['gpu_name']}")
+                self._log(f"[SUCCESS] GPU loaded: {gpu['gpu_name']}")
             else:
                 self.gpu_info_text.delete(1.0, tk.END)
                 self.gpu_info_text.insert(1.0, "No GPU registered")
-                self._log("⚠️ No GPU registered")
+                self._log("[WARNING] No GPU registered")
                 
         except Exception as e:
-            self._log(f"❌ Failed to load GPU info: {str(e)}")
+            self._log(f"[ERROR] Failed to load GPU info: {str(e)}")
     
     def _enable_post_login(self):
         """Enable features after login"""
@@ -982,7 +982,7 @@ class AgentGUI:
         self.gpu_info_text.delete(1.0, tk.END)
         self.session_tree.delete(*self.session_tree.get_children())
         
-        self._log("✅ Logged out")
+        self._log("[SUCCESS] Logged out")
         self.progress_var.set("Logged out")
     
     def _detect_gpu(self):
@@ -1003,11 +1003,11 @@ class AgentGUI:
             self.gpu_info_text.delete(1.0, tk.END)
             self.gpu_info_text.insert(1.0, info_text)
             
-            self._log(f"✅ GPU detected: {gpu_info['name']}")
+            self._log(f"[SUCCESS] GPU detected: {gpu_info['name']}")
             self.progress_var.set("GPU detected")
             
         except Exception as e:
-            self._log(f"❌ GPU detection failed: {str(e)}")
+            self._log(f"[ERROR] GPU detection failed: {str(e)}")
             messagebox.showerror("GPU Detection Failed", f"Failed to detect GPU: {str(e)}")
             self.progress_var.set("GPU detection failed")
     
@@ -1099,7 +1099,7 @@ class AgentGUI:
                 raise RuntimeError(f"{http_err}: {response.text}")
             
             gpu = response.json()
-            self._log(f"✅ GPU registered: {gpu.get('id')}")
+            self._log(f"[SUCCESS] GPU registered: {gpu.get('id')}")
             
             # Reload GPU info
             self._load_gpu_info()
@@ -1107,7 +1107,7 @@ class AgentGUI:
             self.progress_var.set("GPU registered")
             
         except Exception as e:
-            self._log(f"❌ GPU registration failed: {str(e)}")
+            self._log(f"[ERROR] GPU registration failed: {str(e)}")
             messagebox.showerror("GPU Registration Failed", f"Failed to register GPU: {str(e)}")
             self.progress_var.set("GPU registration failed")
     
@@ -1159,7 +1159,7 @@ class AgentGUI:
         
         self.metrics_threads.clear()
         
-        self._log("✅ Agent stopped")
+        self._log("[SUCCESS] Agent stopped")
         self.progress_var.set("Agent stopped")
     
     def _agent_loop(self):
@@ -1195,7 +1195,7 @@ class AgentGUI:
                 time.sleep(5)  # Poll every 5 seconds
                 
             except Exception as e:
-                self._log(f"❌ Agent loop error: {str(e)}")
+                self._log(f"[ERROR] Agent loop error: {str(e)}")
                 time.sleep(10)  # Wait longer on error
     
     def _process_new_session(self, session):
@@ -1242,7 +1242,7 @@ class AgentGUI:
                     subprocess.run(["docker", "rm", "-f", cid], capture_output=True, text=True)
                 except Exception:
                     pass
-                self._log(f"❌ Tunnel failed for session {session_id}; container removed")
+                self._log(f"[ERROR] Tunnel failed for session {session_id}; container removed")
                 return
 
             # Relay OK: publish relay details and mark started
@@ -1251,10 +1251,10 @@ class AgentGUI:
             # Start metrics thread
             self._start_metrics_thread(session_id)
 
-            self._log(f"✅ Session {session_id} ready")
+            self._log(f"[SUCCESS] Session {session_id} ready")
                 
         except Exception as e:
-            self._log(f"❌ Failed to process session {session_id}: {str(e)}")
+            self._log(f"[ERROR] Failed to process session {session_id}: {str(e)}")
     
     def _get_free_port(self):
         """Get a free port for container"""
@@ -1273,7 +1273,7 @@ class AgentGUI:
             response.raise_for_status()
             
         except Exception as e:
-            self._log(f"❌ Failed to update session status: {str(e)}")
+            self._log(f"[ERROR] Failed to update session status: {str(e)}")
 
     def _mark_session_started(self, session_id, password=None, override_host=None, override_port=None, override_user=None):
         """Call backend mark_started to set start_time and mark ACTIVE"""
@@ -1292,7 +1292,7 @@ class AgentGUI:
                               json=payload, headers=headers, timeout=15)
             r.raise_for_status()
         except Exception as e:
-            self._log(f"❌ Failed to mark session started: {str(e)}")
+            self._log(f"[ERROR] Failed to mark session started: {str(e)}")
     
     def _start_metrics_thread(self, session_id):
         """Start metrics reporting thread for session"""
@@ -1318,7 +1318,7 @@ class AgentGUI:
                     time.sleep(2)
                     
                 except Exception as e:
-                    self._log(f"❌ Metrics error for session {session_id}: {str(e)}")
+                    self._log(f"[ERROR] Metrics error for session {session_id}: {str(e)}")
                     break
         
         thread = threading.Thread(target=metrics_loop, daemon=True)
@@ -1374,7 +1374,7 @@ class AgentGUI:
                     self._cleanup_session(session_id)
                     
         except Exception as e:
-            self._log(f"❌ Failed to check ended sessions: {str(e)}")
+            self._log(f"[ERROR] Failed to check ended sessions: {str(e)}")
     
     def _cleanup_session(self, session_id):
         """Clean up a session"""
@@ -1395,7 +1395,7 @@ class AgentGUI:
             stop_evt.set()
             thread.join(timeout=1)
         
-        self._log(f"✅ Cleaned up session {session_id}")
+        self._log(f"[SUCCESS] Cleaned up session {session_id}")
     
     def _clear_logs(self):
         """Clear log display"""

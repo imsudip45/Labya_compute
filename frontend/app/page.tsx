@@ -481,9 +481,19 @@ export default function HomePage() {
                   <div>
                     <h4 className="font-semibold text-slate-200">Start Desktop Agent</h4>
                     <p className="text-slate-400 text-sm mt-1 mb-2">Download and start the desktop agent client. The client auto-detects GPU resources and opens relay listeners.</p>
-                    <a href="/downloads/LabhyaComputeAgent.exe" download className="inline-flex items-center text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors">
-                      Download Windows Client (.exe) &rarr;
-                    </a>
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <a href="/downloads/LabhyaComputeAgentSetup.exe" download className="inline-flex items-center text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors">
+                        Download Windows Setup (.exe) &rarr;
+                      </a>
+                      <span className="hidden sm:inline text-slate-600 text-xs">|</span>
+                      <a href="/downloads/LabhyaComputeAgent.py" download className="inline-flex items-center text-xs font-semibold text-slate-400 hover:text-slate-300 transition-colors">
+                        Python Client (.py)
+                      </a>
+                      <span className="hidden sm:inline text-slate-600 text-xs">|</span>
+                      <a href="/downloads/LabhyaComputeAgent.exe" download className="inline-flex items-center text-xs font-semibold text-slate-400 hover:text-slate-300 transition-colors">
+                        Portable EXE
+                      </a>
+                    </div>
                   </div>
                 </div>
                 <div className="flex gap-4">

@@ -149,15 +149,27 @@ export default function ProfilePage() {
                   <p className="text-xs text-muted-foreground leading-relaxed">
                     To host and lease out your GPU computing resources, download and run the standalone desktop client.
                   </p>
-                  <a href="/downloads/LabhyaComputeAgent.exe" download>
+                  <a href="/downloads/LabhyaComputeAgentSetup.exe" download>
                     <Button className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium">
-                      Download Agent (.exe)
+                      Download Agent Installer (.exe setup)
                     </Button>
                   </a>
+                  <div className="flex gap-2 mt-2">
+                    <a href="/downloads/LabhyaComputeAgent.exe" download className="flex-1">
+                      <Button variant="outline" className="w-full text-[10px] py-1.5 h-auto text-muted-foreground hover:text-foreground">
+                        Portable EXE
+                      </Button>
+                    </a>
+                    <a href="/downloads/LabhyaComputeAgent.py" download className="flex-1">
+                      <Button variant="outline" className="w-full text-[10px] py-1.5 h-auto text-muted-foreground hover:text-foreground">
+                        Python Script (.py)
+                      </Button>
+                    </a>
+                  </div>
                   <div className="text-[10px] text-muted-foreground pt-2 space-y-1">
                     <p className="font-semibold text-xs text-foreground">Quick Setup Instructions:</p>
                     <p>1. Ensure WSL2 & Docker Desktop are running.</p>
-                    <p>2. Start the executable client on your system.</p>
+                    <p>2. Install the agent setup package on your Windows machine.</p>
                     <p>3. Authenticate with your Host credentials.</p>
                   </div>
                 </CardContent>
