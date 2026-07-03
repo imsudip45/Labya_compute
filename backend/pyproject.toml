@@ -1,0 +1,21 @@
+[project]
+name = "labhya-compute-backend"
+version = "0.1.0"
+description = "FastAPI backend for Labhya Compute GPU sharing network"
+requires-python = ">=3.11, <3.13"
+dependencies = [
+    "fastapi==0.110.0",
+    "uvicorn[standard]==0.28.0",
+    "sqlmodel==0.0.16",
+    "psycopg2-binary==2.9.9",
+    "passlib[bcrypt]==1.7.4",
+    "python-jose[cryptography]==3.3.0",
+    "pydantic-settings==2.2.1",
+    "alembic==1.13.1",
+    "python-multipart==0.0.9",
+    "email-validator==2.1.1"
+]
+
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
