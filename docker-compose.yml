@@ -23,10 +23,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: labhya_backend
-    command: >
-      sh -c "python manage.py migrate &&
-             python manage.py collectstatic --noinput &&
-             gunicorn labhya_compute.wsgi:application --bind 0.0.0.0:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     volumes:
       - ./backend:/app
     ports:
