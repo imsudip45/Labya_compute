@@ -10,6 +10,9 @@ jobs:
   build-agent-windows:
     runs-on: windows-latest
 
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v3
@@ -26,19 +29,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller requests
 
-      - name: Compile Standalone Agent Executable
+      - name: Compile and Package Agent (via build script)
         run: |
-          pyinstaller --onefile --noconsole --name LabhyaComputeAgent backend/agent/agent_gui.py
-
-      - name: Move Executable to Frontend Public downloads
-        run: |
-          mkdir -Force frontend/public/downloads
-          copy dist/LabhyaComputeAgent.exe frontend/public/downloads/LabhyaComputeAgent.exe
+          python build_agent.py
 
       - name: Commit and Push Compiled Binary
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add frontend/public/downloads/LabhyaComputeAgent.exe
-          git commit -m "chore: auto-compiled latest windows desktop agent executable [skip ci]" || exit 0
+          git add frontend/public/downloads/LabhyaComputeAgentSetup.exe
+          git add frontend/public/downloads/LabhyaComputeAgent.py
+          git commit -m "chore: auto-compiled latest windows desktop agent assets [skip ci]" || exit 0
           git push origin main
