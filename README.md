@@ -1,5 +1,5 @@
 # Labhya Compute — Decentralized GPU Renting Platform
-
+#Contribuitors Sudip Niroula , Sugam Dahal , Saurab Prasai
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python: 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
 [![Next.js: 15](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
