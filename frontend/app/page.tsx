@@ -6,7 +6,6 @@ import Link from "next/link"
 import { useAuthStore } from "@/lib/auth-store"
 import { api } from "@/lib/api"
 import type { GPU } from "@/lib/types"
-import { mockGPUs } from "@/lib/dummy-data"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -49,16 +48,13 @@ export default function HomePage() {
       try {
         setLoading(true)
         const data = await api.getAvailableGPUs()
-        // If data is empty or not an array, fall back to mock GPUs for display
-        if (Array.isArray(data)) {
-          setGpus(data)
-        } else {
-          setGpus(mockGPUs.filter(gpu => gpu.gpu_availability))
-        }
+        setGpus(Array.isArray(data) ? data : [])
+        setError(null)
       } catch (err) {
-        console.error("Failed to load live GPUs, using mock data:", err)
-        // Fallback to mock data on network error so the page always looks rich
-        setGpus(mockGPUs.filter(gpu => gpu.gpu_availability))
+        console.error("Failed to load live GPUs:", err)
+        // Show the real state instead of sample data
+        setGpus([])
+        setError("Could not reach the marketplace right now. Please try again later.")
       } finally {
         setLoading(false)
       }
@@ -304,8 +300,8 @@ export default function HomePage() {
           ) : processedGPUs.length === 0 ? (
             <div className="text-center py-20 bg-slate-950/20 border border-slate-850 rounded-2xl">
               <Cpu className="h-12 w-12 mx-auto mb-4 text-slate-700 opacity-80" />
-              <h3 className="text-lg font-semibold text-slate-300">No matching GPUs online</h3>
-              <p className="text-sm text-slate-500 mt-1">Try resetting your filters or search query.</p>
+              <h3 className="text-lg font-semibold text-slate-300">{error ? "Marketplace unavailable" : "No matching GPUs online"}</h3>
+              <p className="text-sm text-slate-500 mt-1">{error ?? "Try resetting your filters or search query."}</p>
             </div>
           ) : (
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
