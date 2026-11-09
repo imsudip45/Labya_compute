@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:15-alpine
@@ -29,11 +27,10 @@ services:
     ports:
       - "8080:8000"
     environment:
-      - DJANGO_SECRET_KEY=production-secret-key-change-me-in-prod
-      - DJANGO_DEBUG=True
-      - DJANGO_ALLOWED_HOSTS=*
+      # Local development only. Set a real SECRET_KEY in any deployment.
+      - SECRET_KEY=${SECRET_KEY:-local-dev-only-change-me}
       - DATABASE_URL=postgres://labhya_user:labhya_password@db:5432/labhya_compute
-      - DJANGO_CORS_ALLOWED_ORIGINS=http://localhost:3001
+      - CORS_ALLOWED_ORIGINS=http://localhost:3001
     depends_on:
       db:
         condition: service_healthy

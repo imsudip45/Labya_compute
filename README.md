@@ -1,188 +1,104 @@
-# Labhya Compute — Decentralized GPU Renting Platform
-#Contribuitors Sudip Niroula , Sugam Dahal , Saurab Prasai
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python: 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
-[![Next.js: 15](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-blue.svg)](https://www.postgresql.org/)
-[![Docker: Supported](https://img.shields.io/badge/Docker-Supported-blue.svg)](https://www.docker.com/)
+# Labhya Compute
 
-Labhya Compute is a production-grade, decentralized GPU computing platform that connects individuals who need GPU power (**Renters**) with individuals who have idle GPU resources (**Hosts**). 
+A marketplace where people can rent out idle GPUs by the hour. Hosts run a small desktop app that starts a Docker container on their machine and opens a reverse SSH tunnel to a relay server; renters then connect to that container over SSH through the relay.
 
-The platform enables Hosts to securely lease out their hardware through a lightweight desktop client that automatically spins up Dockerized SSH containers. Renters can search the marketplace, lease GPU instances by the hour, deposit funds via an integrated wallet system, and connect directly to their private GPU environments using standard SSH or Jupyter terminals.
+Labhya Compute started as our 7th-semester college project at Tribhuvan University, built by a team of three: **Sudip Niroula, Sugam Dahal and Saurab Prasai** (August 2025). It won Most Innovative Project at Ambition Hackathon 2025. The first version used Django REST Framework; in July 2026 Sudip rewrote the backend in FastAPI and SQLModel, and the Django code was removed.
 
----
-
-## 🏗️ System Architecture
-
-The platform consists of three main components:
-1. **Django REST API (Backend)**: Coordinates sessions, manages user roles, handles ledger/wallet balances, leases relay ports, and stores metrics.
-2. **Next.js Web Portal (Frontend)**: Offers a modern UI for renter marketplace searches, transaction logs, active session management, and host dashboard statistics.
-3. **Host Agent (Desktop GUI)**: Automatically detects native GPU hardware, builds/launches isolated Docker containers for renters, and creates reverse SSH tunnels back to the relay server to bypass NAT/firewalls.
+## How it works
 
 ```mermaid
 sequenceDiagram
-    participant Renter as Renter (Browser)
-    participant Backend as Labhya REST API
-    participant Relay as SSH Relay Server
-    participant Agent as Host Desktop Client
-    participant Container as Docker GPU Container
-
-    Host->>Agent: Launch Client & Authenticate
-    Agent->>Backend: Register Host & Detect GPU Specs
-    Renter->>Backend: Browse Marketplace & Rent GPU
-    Backend->>Backend: Deduct Funds & Reserve Relay Port
-    Backend->>Backend: Create Session (PENDING)
-    
-    Note over Agent, Backend: Long-polling or WebSockets for pending sessions
-    Agent->>Backend: Fetch Active Sessions
-    Agent->>Container: Build & Launch SSH Docker Container
-    Agent->>Relay: Establish Reverse SSH Tunnel (ssh -R relay_port:localhost:container_port)
-    Agent->>Backend: Mark Session as ACTIVE & Send Password
-    
-    Renter->>Backend: Fetch Session Connection Info (ssh_host & relay_port)
-    Renter->>Relay: Connect via SSH (ssh renter@relay_host -p relay_port)
-    Relay-->>Container: Forward traffic securely to Container
+    participant R as Renter (web app)
+    participant API as API (FastAPI)
+    participant A as Host agent (Windows)
+    participant Relay as Relay server
+    R->>API: Rent a GPU (wallet balance checked)
+    API->>API: Create session, lease a relay port
+    A->>API: Poll for pending sessions
+    A->>A: Start Docker container with SSH, set session password
+    A->>Relay: ssh -R relay_port -> container port 22
+    A->>API: Mark session started, report GPU metrics
+    R->>Relay: ssh -p relay_port ... (reaches the container)
+    R->>API: End session (cost charged, port released)
 ```
 
----
+| Part | Stack | Where |
+|---|---|---|
+| Web app | Next.js 15, TypeScript, Tailwind CSS, shadcn/ui | `frontend/` |
+| API | FastAPI, SQLModel, PostgreSQL, JWT auth | `backend/app/` |
+| Host agent | Python, Tkinter, Docker, OpenSSH; packaged as a Windows `.exe` with PyInstaller | `backend/agent/`, `build_agent.py` |
+| Session image | Ubuntu 22.04 with OpenSSH | `backend/agent/docker/session/` |
 
-## ⚡ Quick Start
+A GitHub Actions workflow (`.github/workflows/build-agent.yml`) builds the Windows agent on every push to `main` and commits it to `frontend/public/downloads/`, where the web app offers it for download.
 
-### 🐳 The Quickest Way: Docker Compose (All-in-One)
-The root of the repository includes a pre-configured `docker-compose.yml` that mounts a PostgreSQL database, runs migrations, compiles static files, and starts the Django and Next.js services automatically.
+## Running it locally
 
-1. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/your-username/Labya_compute.git
-   cd Labya_compute
-   ```
+**With Docker Compose** (PostgreSQL, API and web app):
 
-2. **Launch Services**:
-   ```bash
-   docker compose up --build
-   ```
-   * Access the Next.js Frontend at: `http://localhost:3000`
-   * Access the Django API Backend at: `http://localhost:8000`
-   * Access the Django Admin Dashboard at: `http://localhost:8000/admin`
+```bash
+docker compose up --build
+```
 
----
+The web app is then at http://localhost:3001 and the API at http://localhost:8080 (interactive docs at `/docs`).
 
-### 🛠️ Manual Development Setup
+**Without Docker:**
 
-If you prefer to run services manually for local debugging:
+```bash
+# API
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+export DATABASE_URL=postgresql://user:password@localhost:5432/labhya_compute
+export SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
+uvicorn app.main:app --reload --port 8000
 
-#### 1. Database (PostgreSQL)
-Ensure you have a running PostgreSQL instance and create a database named `labhya_compute`. Or, if no database variables are provided, Django will fall back to local `SQLite3` automatically for zero-config development.
+# Web app (in another terminal)
+cd frontend
+pnpm install
+NEXT_PUBLIC_API_URL=http://localhost:8000/api pnpm dev
+```
 
-#### 2. REST API Backend
+**Host agent:** needs Windows 10 or 11 with WSL2 and Docker. Either download the agent from the web app or run `python backend/agent/agent_gui.py`.
+
+**Tests:**
+
 ```bash
 cd backend
-python -m venv venv
-# On Windows: venv\Scripts\activate  |  On Unix: source venv/bin/activate
-pip install -r requirements.txt
-
-# Run migrations & seed db
-python manage.py migrate
-python manage.py createsuperuser
-
-# Start development server
-python manage.py runserver
+pip install -r requirements.txt -r requirements-dev.txt
+pytest
 ```
 
-#### 3. Next.js Frontend
-```bash
-cd frontend
-npm install
-npm run dev
+The tests use a temporary SQLite database and cover the rental flow, session access rules and token refresh.
+
+## Configuration
+
+| Variable | Used by | Purpose |
+|---|---|---|
+| `DATABASE_URL` | API | PostgreSQL connection string (or set `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `DB_HOST`, `DB_PORT`) |
+| `SECRET_KEY` | API | Signs login tokens. Required in any deployment; if it is missing, a temporary random key is used and logins stop working after a restart |
+| `CORS_ALLOWED_ORIGINS` | API | Comma-separated web app origins |
+| `RELAY_HOST`, `RELAY_PORT_RANGE_START`, `RELAY_PORT_RANGE_END` | API | Relay server address and the ports it can lease to sessions |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | API | Access token lifetime (default 24 hours) |
+| `NEXT_PUBLIC_API_URL` | Web app | Base URL of the API, ending in `/api` |
+
+## Known limitations
+
+- **No real payments.** The wallet is simulated: adding funds does not take money from anywhere.
+- **Windows-only hosts.** The agent depends on WSL2 and Docker Desktop.
+- **SSH passwords are stored in plain text** in the database so the renter can see them, and the agent turns off SSH host-key checking when it connects to the relay. A real deployment would use per-session keys and a pinned relay host key.
+- **No database migrations yet.** Tables are created at startup with `SQLModel.metadata.create_all`, so schema changes to an existing database have to be applied by hand. Alembic is listed as a dependency but not set up.
+- **End-to-end SSH path not re-tested since the FastAPI rewrite.** The API tests cover the backend, but the full agent → relay → container connection still needs checking; for example, the connection string shows the relay account name, while the container's user is `labuser`.
+- **Frontend type errors.** `next.config.mjs` skips type checking during builds, and `tsc` currently reports type errors in a few pages.
+- **Built agent binaries live in the repository.** Publishing them as GitHub Release assets would keep the repository small.
+
+## Repository layout
+
 ```
-Open `http://localhost:3000` in your browser.
-
-#### 4. Desktop Host Agent
-```bash
-cd backend/agent
-pip install requests
-python agent_gui.py
+backend/
+  app/            FastAPI app: models, schemas, routers (auth, gpus, sessions, wallets, dashboard)
+  agent/          Host agent (Tkinter GUI) and the session container image
+  tests/          API tests
+frontend/         Next.js web app
+build_agent.py    Packages the agent with PyInstaller
+docker-compose.yml
 ```
-*Note: The agent client requires a working installation of **WSL2** (on Windows), **Docker Desktop**, and **OpenSSH Client**.*
-
----
-
-## 📂 Codebase Directory Structure
-
-```text
-├── backend/                       # Django Backend Root
-│   ├── labhya_compute/            # Main Django Settings and URL routing
-│   ├── api/                       # DRF Application (Models, Serializers, Views)
-│   ├── agent/                     # Host Desktop Client application
-│   │   ├── docker/                # Docker templates for Renter environments
-│   │   └── agent_gui.py           # Tkinter-based Host Desktop GUI client
-│   ├── requirements.txt           # Python backend dependencies
-│   └── Dockerfile                 # Production Dockerfile for Django
-│
-├── frontend/                      # Next.js Frontend Root
-│   ├── app/                       # Page layouts & router directories
-│   ├── components/                # Reusable UI component libraries (shadcn/Radix)
-│   ├── lib/                       # API clients, auth stores, and utilities
-│   ├── package.json               # Frontend dependencies & package config
-│   └── Dockerfile                 # Production Dockerfile for Next.js
-│
-└── docker-compose.yml             # Local / Production Container Orchestrator
-```
-
----
-
-## 🗄️ Database Schema & Models
-
-The REST API utilizes the following core schema entities:
-
-| Model | Description |
-| :--- | :--- |
-| **`User`** | Django auth user representing the core profile (email, password). |
-| **`Host`** | Profile extensions representing individuals supplying GPU machines. |
-| **`Renter`** | Profile extensions representing individuals hiring GPU machines. |
-| **`Wallet`** | Balances ledger associated with either a `Host` or a `Renter` (defaults to NPR currency). |
-| **`Transaction`** | Ledger entries tracking Deposits, Withdrawals, Rental Payments, and Earnings. |
-| **`GPU`** | Hardware details (Name, VRAM, pricing rate, availability status, geo-location). |
-| **`Session`** | Historical or active lease agreements tracking duration, SSH credentials, connection state, and live GPU telemetry metrics (temperature, load). |
-| **`RelayPort`** | Relational lease table locking port ranges (e.g., `8001-8999`) on the relay server to prevent connection collisions. |
-
----
-
-## ⚙️ Environment Configurations
-
-### Django API Backend
-You can configure the backend service using the following environment variables:
-
-| Variable | Description | Default |
-| :--- | :--- | :--- |
-| `DJANGO_SECRET_KEY` | Private secret key used for session signing and hashing. | *Generated Dev Key* |
-| `DJANGO_DEBUG` | Enable developer logs and traceback screens. | `True` |
-| `DJANGO_ALLOWED_HOSTS` | Comma-separated list of allowed request domains. | `*` |
-| `DJANGO_CORS_ALLOWED_ORIGINS`| Comma-separated list of CORS authorized web apps. | *Allow All* |
-| `DATABASE_URL` | SQLAlchemy-style PostgreSQL database connection URI. | *SQLite fallback* |
-| `RELAY_HOST` | Hostname/IP address of the SSH relay server. | `localhost` |
-| `RELAY_PORT_RANGE_START` | Initial port in the reserved SSH tunnel range. | `8001` |
-| `RELAY_PORT_RANGE_END` | Terminal port in the reserved SSH tunnel range. | `8999` |
-
-### Next.js Frontend
-Configure the frontend to direct API traffic:
-
-| Variable | Description | Default |
-| :--- | :--- | :--- |
-| `NEXT_PUBLIC_API_URL` | Absolute base URL directing requests to Django REST API. | `http://localhost:8000/api` |
-
----
-
-## 🚀 Production Deployment Considerations
-
-1. **Security Settings**: Set `DJANGO_DEBUG=False` in your hosting environment. Ensure `DJANGO_SECRET_KEY` is set to a long, randomized string.
-2. **Reverse SSH Relay Server**:
-   In production, you must set up an external OpenSSH server configured to allow port forwarding gateway ports:
-   Edit `/etc/ssh/sshd_config` on your relay/bastion server:
-   ```text
-   GatewayPorts yes
-   ClientAliveInterval 60
-   ClientAliveCountMax 3
-   ```
-3. **SSL Certificate**: Always serve both backend and frontend applications behind HTTPS using a reverse proxy like Nginx, Traefik, or cloud hosting integrations (Cloudflare, Render, AWS ALBs).
-4. **Static Assets**: Backend static assets are served using `whitenoise`. Running `python manage.py collectstatic --noinput` during your deployment build phase compiles these automatically.
