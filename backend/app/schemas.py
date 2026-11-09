@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
-from pydantic import BaseModel, EmailStr
+from pydantic import AliasChoices, BaseModel, EmailStr, Field
 
 class UserBase(BaseModel):
     email: EmailStr
@@ -78,7 +78,8 @@ class GPUResponse(BaseModel):
     updated_at: datetime
 
 class SessionCreate(BaseModel):
-    gpu_id: uuid.UUID
+    # The web app sends {"gpu": "<id>"}; accept "gpu_id" too.
+    gpu_id: uuid.UUID = Field(validation_alias=AliasChoices("gpu_id", "gpu"))
 
 class SessionResponse(BaseModel):
     id: uuid.UUID
@@ -177,3 +178,6 @@ class DashboardStatsResponse(BaseModel):
     availableGPUs: Optional[int] = 0
     totalSessions: Optional[int] = 0
     totalSpent: Optional[float] = 0.0
+
+class RefreshPayload(BaseModel):
+    refresh: str

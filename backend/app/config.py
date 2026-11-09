@@ -1,3 +1,5 @@
+import logging
+import secrets
 from pydantic_settings import BaseSettings
 from typing import Optional, List
 
@@ -8,7 +10,8 @@ class Settings(BaseSettings):
     db_host: str = "db"
     db_port: int = 5432
     database_url: Optional[str] = None
-    secret_key: str = "supersecretkeyforlabhyacomputefastapi2026"
+    # Must be set through the SECRET_KEY environment variable in any real deployment.
+    secret_key: Optional[str] = None
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440  # 24 hours for stable local dev dev sessions
     refresh_token_expire_days: int = 7
@@ -37,3 +40,12 @@ class Settings(BaseSettings):
         extra = "ignore"
 
 settings = Settings()
+
+if not settings.secret_key:
+    # Without a configured key, use a random one for this process only. Logins then
+    # stop working after a restart, which is acceptable for local development but
+    # makes a missing production setting obvious instead of silently insecure.
+    settings.secret_key = secrets.token_urlsafe(48)
+    logging.getLogger(__name__).warning(
+        "SECRET_KEY is not set; using a temporary random key. Set SECRET_KEY in the environment."
+    )

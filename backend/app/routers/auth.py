@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 from app.db import get_session
 from app.models import User, Renter, Host, Wallet
-from app.schemas import RegisterPayload, LoginPayload, TokenResponse
+from app.schemas import RegisterPayload, LoginPayload, TokenResponse, RefreshPayload
 from app.auth_utils import get_password_hash, verify_password, create_access_token, create_refresh_token
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
@@ -102,13 +102,13 @@ def login(payload: LoginPayload, db: Session = Depends(get_session)):
     )
 
 @router.post("/refresh/", response_model=TokenResponse)
-def refresh_token_route(refresh: str, db: Session = Depends(get_session)):
+def refresh_token_route(body: RefreshPayload, db: Session = Depends(get_session)):
     from jose import jwt, JWTError
     from app.config import settings
     try:
-        payload = jwt.decode(refresh, settings.secret_key, algorithms=[settings.jwt_algorithm])
+        payload = jwt.decode(body.refresh, settings.secret_key, algorithms=[settings.jwt_algorithm])
         email = payload.get("sub")
-        if not email:
+        if not email or payload.get("type") != "refresh":
             raise HTTPException(status_code=401, detail="Invalid refresh token")
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid refresh token")

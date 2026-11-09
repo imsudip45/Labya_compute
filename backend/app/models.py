@@ -141,6 +141,17 @@ class Wallet(SQLModel, table=True):
     host: Optional[Host] = Relationship(back_populates="wallet")
     transactions: List["Transaction"] = Relationship(back_populates="wallet")
 
+    def get_owner_name(self) -> str:
+        """Readable owner label, e.g. 'Renter: Jane Doe'."""
+        for label, owner in (("Renter", self.renter), ("Host", self.host)):
+            if owner is not None:
+                user = getattr(owner, "user", None)
+                if user is None:
+                    return label
+                name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email
+                return f"{label}: {name}"
+        return "Unknown"
+
 class Transaction(SQLModel, table=True):
     id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
     wallet_id: uuid.UUID = Field(foreign_key="wallet.id")
@@ -204,6 +215,25 @@ class Session(SQLModel, table=True):
     renter: Renter = Relationship(back_populates="sessions")
     host: Host = Relationship(back_populates="sessions")
     relay_port: Optional["RelayPort"] = Relationship(back_populates="leased_to_session", sa_relationship_kwargs={"uselist": False})
+
+    def get_ssh_connection_string(self) -> Optional[str]:
+        if self.ssh_host and self.ssh_username:
+            return f"ssh {self.ssh_username}@{self.ssh_host} -p {self.ssh_port or 22}"
+        return None
+
+    def update_connection_status(self, status: str, error_message: Optional[str] = None) -> None:
+        self.connection_status = status
+        if error_message:
+            self.connection_error = error_message
+        if status == "CONNECTED":
+            self.last_connected = datetime.utcnow()
+        self.updated_at = datetime.utcnow()
+
+    def update_gpu_metrics(self, gpu_util: int, memory_util: int, temp: int) -> None:
+        self.gpu_utilization = gpu_util
+        self.memory_utilization = memory_util
+        self.temperature = temp
+        self.updated_at = datetime.utcnow()
 
     @property
     def total_cost(self) -> Decimal:

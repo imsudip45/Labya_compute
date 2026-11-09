@@ -154,6 +154,26 @@ def make_session_response(session: Session, db: Session_DB) -> SessionResponse:
         updated_at=session.updated_at
     )
 
+def get_session_for_participant(session_id: uuid.UUID, user: User, db: Session_DB) -> Session:
+    """Return the session only if the user is its renter or its host."""
+    session = db.get(Session, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    renter = db.get(Renter, session.renter_id)
+    host = db.get(Host, session.host_id)
+    if user.id not in {getattr(renter, "user_id", None), getattr(host, "user_id", None)}:
+        raise HTTPException(status_code=403, detail="Not allowed to access this session")
+    return session
+
+def get_session_for_host(session_id: uuid.UUID, host: Host, db: Session_DB) -> Session:
+    """Return the session only if it runs on this host's GPU."""
+    session = db.get(Session, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.host_id != host.id:
+        raise HTTPException(status_code=403, detail="Not allowed to update this session")
+    return session
+
 @router.get("/", response_model=List[SessionResponse])
 def get_user_sessions(user: User = Depends(get_current_user), db: Session_DB = Depends(get_session)):
     stmt_renter = select(Renter).where(Renter.user_id == user.id)
@@ -218,17 +238,13 @@ def create_session(payload: SessionCreate, renter: Renter = Depends(get_current_
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/{session_id}/", response_model=SessionDetailResponse)
-def get_session_detail(session_id: uuid.UUID, db: Session_DB = Depends(get_session)):
-    session = db.get(Session, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+def get_session_detail(session_id: uuid.UUID, user: User = Depends(get_current_user), db: Session_DB = Depends(get_session)):
+    session = get_session_for_participant(session_id, user, db)
     return make_session_detail_response(session, db)
 
 @router.post("/{session_id}/mark_started/")
-def mark_session_started(session_id: uuid.UUID, payload: SessionStatusUpdate, db: Session_DB = Depends(get_session)):
-    session = db.get(Session, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+def mark_session_started(session_id: uuid.UUID, payload: SessionStatusUpdate, host: Host = Depends(get_current_host), db: Session_DB = Depends(get_session)):
+    session = get_session_for_host(session_id, host, db)
     if session.status not in ["PENDING", "ACTIVE"]:
         raise HTTPException(status_code=400, detail="Invalid session state")
         
@@ -246,10 +262,8 @@ def mark_session_started(session_id: uuid.UUID, payload: SessionStatusUpdate, db
     return {"message": "Session marked as started", "session_id": str(session.id)}
 
 @router.post("/{session_id}/update_connection_status/")
-def update_connection_status(session_id: uuid.UUID, payload: ConnectionStatusUpdate, db: Session_DB = Depends(get_session)):
-    session = db.get(Session, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+def update_connection_status(session_id: uuid.UUID, payload: ConnectionStatusUpdate, host: Host = Depends(get_current_host), db: Session_DB = Depends(get_session)):
+    session = get_session_for_host(session_id, host, db)
         
     session.update_connection_status(payload.status, payload.error_message)
     db.add(session)
@@ -257,10 +271,8 @@ def update_connection_status(session_id: uuid.UUID, payload: ConnectionStatusUpd
     return {"message": "Connection status updated", "connection_status": session.connection_status}
 
 @router.post("/{session_id}/update_gpu_metrics/")
-def update_gpu_metrics(session_id: uuid.UUID, payload: GPUMetricsUpdate, db: Session_DB = Depends(get_session)):
-    session = db.get(Session, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+def update_gpu_metrics(session_id: uuid.UUID, payload: GPUMetricsUpdate, host: Host = Depends(get_current_host), db: Session_DB = Depends(get_session)):
+    session = get_session_for_host(session_id, host, db)
         
     session.update_gpu_metrics(payload.gpu_utilization, payload.memory_utilization, payload.temperature)
     db.add(session)
@@ -268,10 +280,8 @@ def update_gpu_metrics(session_id: uuid.UUID, payload: GPUMetricsUpdate, db: Ses
     return {"message": "GPU metrics updated"}
 
 @router.post("/{session_id}/end_session/")
-def end_session(session_id: uuid.UUID, db: Session_DB = Depends(get_session)):
-    session = db.get(Session, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+def end_session(session_id: uuid.UUID, user: User = Depends(get_current_user), db: Session_DB = Depends(get_session)):
+    session = get_session_for_participant(session_id, user, db)
     if session.status == "COMPLETED":
         raise HTTPException(status_code=400, detail="Session is already completed")
         

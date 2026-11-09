@@ -19,7 +19,7 @@ from app.config import settings
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.get_cors_origins,
-    allow_credentials=True,
+    allow_credentials="*" not in settings.get_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
