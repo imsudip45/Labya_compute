@@ -187,8 +187,9 @@ CMD ["/usr/sbin/sshd","-D"]
             if run.returncode != 0 or not cid:
                 raise RuntimeError(f"docker run failed: {run.stderr}")
             # Set password for labuser
-            subprocess.run(["docker", "exec", cid, "bash", "-lc", f"echo 'labuser:{password}' | chpasswd"],
-                           capture_output=True, text=True)
+            # Pass the password on stdin so it is never interpreted by a shell
+            subprocess.run(["docker", "exec", "-i", cid, "chpasswd"],
+                           input=f"labuser:{password}\n", capture_output=True, text=True)
             return cid, host_port
         except Exception as e:
             raise RuntimeError(f"launch_container error: {e}")
