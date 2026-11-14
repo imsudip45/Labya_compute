@@ -3,6 +3,14 @@ name: Build & Deploy Desktop Agent
 on:
   push:
     branches: [ main ]
+    # Only when the agent itself changes. The bot's own commit touches only
+    # frontend/public/downloads/, so it doesn't trigger another build.
+    paths:
+      - "backend/agent/**"
+      - "build_agent.py"
+      - ".github/workflows/build-agent.yml"
+  # Run it by hand from the Actions tab, e.g. after changing LABHYA_API_URL.
+  workflow_dispatch:
 
 jobs:
   build-agent-windows:
