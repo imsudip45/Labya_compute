@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast"
 import { api } from "@/lib/api"
 import type { GPU } from "@/lib/types"
 import { useLoad } from "@/lib/use-load"
+import { AGENT_INSTALLER, AGENT_PORTABLE } from "@/lib/downloads"
 
 export default function GPUsPage() {
   return (
@@ -39,7 +40,7 @@ function MyGPUs() {
         <Empty
           title="No GPUs listed yet"
           body="Install the desktop agent on the PC with your GPU and log in with this account. The agent detects your GPU and lists it here."
-          action={<Button asChild><a href="/downloads/LabhyaComputeAgentSetup.exe" download><Download aria-hidden /> Download agent for Windows</a></Button>}
+          action={<Button asChild><a href={AGENT_INSTALLER} download><Download aria-hidden /> Download agent for Windows</a></Button>}
         />
       ) : (
         <Table head={[{ label: "GPU" }, { label: "VRAM", right: true }, { label: "Location" }, { label: "Price", right: true }, { label: "Status" }, { label: "" }]}>
@@ -79,8 +80,8 @@ function MyGPUs() {
             Keep it open whenever your GPU is available to rent. It needs Windows 10 or 11, WSL2 and Docker Desktop.
           </p>
           <div className="mt-4 flex flex-wrap gap-3">
-            <Button variant="outline" size="sm" asChild><a href="/downloads/LabhyaComputeAgentSetup.exe" download><Download aria-hidden /> Installer (.exe)</a></Button>
-            <Button variant="outline" size="sm" asChild><a href="/downloads/LabhyaComputeAgent.exe" download><Download aria-hidden /> Portable (.exe)</a></Button>
+            <Button variant="outline" size="sm" asChild><a href={AGENT_INSTALLER} download><Download aria-hidden /> Installer (.exe)</a></Button>
+            <Button variant="outline" size="sm" asChild><a href={AGENT_PORTABLE} download><Download aria-hidden /> Portable (.exe)</a></Button>
           </div>
         </div>
       </Section>

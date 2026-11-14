@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
 import { useAuthStore } from "@/lib/auth-store"
 import { useLoad } from "@/lib/use-load"
+import { AGENT_INSTALLER } from "@/lib/downloads"
 
 const load = () => Promise.all([api.getDashboardStats(), api.getWallet(), api.getSessions()])
 
@@ -81,7 +82,7 @@ function Overview() {
             body="Install the desktop agent on the PC with your GPU and log in with this account. The agent detects your GPU and lists it here."
             action={
               <Button asChild>
-                <a href="/downloads/LabhyaComputeAgentSetup.exe" download><Download aria-hidden /> Download agent for Windows</a>
+                <a href={AGENT_INSTALLER} download><Download aria-hidden /> Download agent for Windows</a>
               </Button>
             }
           />

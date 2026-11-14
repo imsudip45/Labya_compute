@@ -8,6 +8,7 @@ import type { GPU } from "@/lib/types"
 import { RentDialog } from "@/components/app/rent-dialog"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Cpu, Download, Menu, Search, X } from "lucide-react"
+import { AGENT_INSTALLER, AGENT_PORTABLE } from "@/lib/downloads"
 
 // Copy and styling follow CLAUDE.md ("Design system", "Writing for the UI").
 
@@ -381,13 +382,13 @@ export default function HomePage() {
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <ButtonLink href="/register/host">Become a host</ButtonLink>
-              <ButtonLink href="/downloads/LabhyaComputeAgentSetup.exe" variant="secondary" download>
+              <ButtonLink href={AGENT_INSTALLER} variant="secondary" download>
                 <Download className="h-4 w-4" aria-hidden /> Download agent
               </ButtonLink>
             </div>
             <p className="mt-4 text-caption text-pewter">
               Windows installer. Also available as a{" "}
-              <a href="/downloads/LabhyaComputeAgent.exe" download className="text-cloud underline decoration-graphite-light underline-offset-4 hover:decoration-whiteout">portable .exe</a>.
+              <a href={AGENT_PORTABLE} download className="text-cloud underline decoration-graphite-light underline-offset-4 hover:decoration-whiteout">portable .exe</a>.
             </p>
           </div>
           <ul className="space-y-px overflow-hidden rounded-sm border border-graphite-light bg-graphite-light">
@@ -439,7 +440,7 @@ export default function HomePage() {
           </div>
           {[
             { title: "Renters", links: [["GPUs", "#gpus"], ["How it works", "#how-it-works"], ["FAQ", "#faq"]] },
-            { title: "Hosts", links: [["Become a host", "/register/host"], ["Download agent", "/downloads/LabhyaComputeAgentSetup.exe"]] },
+            { title: "Hosts", links: [["Become a host", "/register/host"], ["Download agent", AGENT_INSTALLER]] },
             { title: "Account", links: [["Log in", "/login"], ["Sign up", "/register/renter"], ["Dashboard", "/dashboard"]] },
           ].map((col) => (
             <div key={col.title}>

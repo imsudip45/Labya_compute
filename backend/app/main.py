@@ -55,7 +55,7 @@ async def security_headers(request: Request, call_next):
     path = request.url.path
     if path.startswith("/_next/static/"):  # file names contain a content hash
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-    elif not path.startswith(("/downloads/", "/favicon")) and "." not in path.rsplit("/", 1)[-1]:
+    elif "." not in path.rsplit("/", 1)[-1]:
         response.headers["Cache-Control"] = "no-store"  # API responses and HTML pages
     if settings.is_production:
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
