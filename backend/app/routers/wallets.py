@@ -1,108 +1,54 @@
-from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
+
+from app.auth_utils import get_current_host, get_current_renter, get_current_user
+from app.billing import post, wallet_of
+from app.config import settings
 from app.db import get_session
-from app.models import Wallet, Transaction, Renter, Host, User
-from app.schemas import WalletResponse, WalletDetailResponse, WalletUpdatePayload, TransactionResponse
-from app.auth_utils import get_current_user, get_current_renter, get_current_host
+from app.models import Host, Renter, Transaction, User, Wallet
+from app.schemas import BalanceResponse, TransactionResponse, WalletResponse, WalletUpdatePayload
 
 router = APIRouter(prefix="/api/wallets", tags=["Wallets"])
 
-def make_transaction_response(tx: Transaction, db: Session) -> TransactionResponse:
-    stmt_wallet = select(Wallet).where(Wallet.id == tx.wallet_id)
-    wallet = db.exec(stmt_wallet).first()
-    owner_name = wallet.get_owner_name() if wallet else "Unknown"
-    return TransactionResponse(
-        id=tx.id,
-        wallet_id=tx.wallet_id,
-        transaction_type=tx.transaction_type,
-        amount=tx.amount,
-        status=tx.status,
-        description=tx.description,
-        wallet_owner=owner_name,
-        created_at=tx.created_at,
-        updated_at=tx.updated_at
-    )
 
-def make_wallet_response(wallet: Wallet) -> WalletResponse:
-    owner_name = wallet.get_owner_name()
-    owner_type = "Renter" if wallet.renter_id else "Host" if wallet.host_id else "Unknown"
+@router.get("/", response_model=WalletResponse)
+def my_wallet(user: User = Depends(get_current_user), db: Session = Depends(get_session)):
+    renter = db.exec(select(Renter).where(Renter.user_id == user.id)).first()
+    host = None if renter else db.exec(select(Host).where(Host.user_id == user.id)).first()
+    if not renter and not host:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "This account has no wallet.")
+    col = Wallet.renter_id if renter else Wallet.host_id
+    wallet = db.exec(select(Wallet).where(col == (renter or host).id)).first()
+    if not wallet:
+        wallet = wallet_of(db, renter_id=renter.id) if renter else wallet_of(db, host_id=host.id)
+        db.commit()
+    txs = db.exec(
+        select(Transaction).where(Transaction.wallet_id == wallet.id).order_by(Transaction.created_at.desc()).limit(500)
+    ).all()
     return WalletResponse(
-        id=wallet.id,
-        balance=wallet.balance,
-        currency=wallet.currency,
-        owner_name=owner_name,
-        owner_type=owner_type,
-        created_at=wallet.created_at,
-        updated_at=wallet.updated_at
+        id=wallet.id, balance=wallet.balance, currency=wallet.currency,
+        owner_name=f"{'Renter' if renter else 'Host'}: {user.display_name}",
+        transactions=[TransactionResponse(**t.model_dump()) for t in txs],
     )
 
-@router.get("/", response_model=WalletDetailResponse)
-def get_user_wallet(user: User = Depends(get_current_user), db: Session = Depends(get_session)):
-    stmt_renter = select(Renter).where(Renter.user_id == user.id)
-    renter = db.exec(stmt_renter).first()
-    if renter:
-        wallet = renter.get_wallet(db)
-    else:
-        stmt_host = select(Host).where(Host.user_id == user.id)
-        host = db.exec(stmt_host).first()
-        if host:
-            wallet = host.get_wallet(db)
-        else:
-            raise HTTPException(status_code=404, detail="No wallet profile found for user")
-            
-    stmt_txs = select(Transaction).where(Transaction.wallet_id == wallet.id).order_by(Transaction.created_at.desc())
-    txs = db.exec(stmt_txs).all()
-    owner_name = wallet.get_owner_name()
-    
-    return WalletDetailResponse(
-        id=wallet.id,
-        balance=wallet.balance,
-        currency=wallet.currency,
-        owner_name=owner_name,
-        transactions=[make_transaction_response(tx, db) for tx in txs],
-        created_at=wallet.created_at,
-        updated_at=wallet.updated_at
-    )
 
-@router.post("/add_funds/")
-def add_funds(payload: WalletUpdatePayload, user: User = Depends(get_current_user), db: Session = Depends(get_session)):
-    if payload.amount <= 0:
-        raise HTTPException(status_code=400, detail="Valid amount is required")
-        
-    stmt_renter = select(Renter).where(Renter.user_id == user.id)
-    renter = db.exec(stmt_renter).first()
-    if not renter:
-        raise HTTPException(status_code=403, detail="Only renters can add funds")
-        
-    try:
-        new_balance = renter.add_money(db, payload.amount, payload.description)
-        return {
-            "message": "Funds added successfully",
-            "new_balance": float(new_balance),
-            "amount_added": payload.amount
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+@router.post("/add_funds/", response_model=BalanceResponse)
+def add_funds(payload: WalletUpdatePayload, renter: Renter = Depends(get_current_renter), db: Session = Depends(get_session)):
+    if not settings.simulated_payments:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Adding funds isn't available yet.")
+    wallet = wallet_of(db, renter_id=renter.id)
+    post(db, wallet, "DEPOSIT", payload.amount, payload.description or "Deposit")
+    db.commit()
+    return BalanceResponse(balance=wallet.balance)
 
-@router.post("/withdraw_funds/")
-def withdraw_funds(payload: WalletUpdatePayload, user: User = Depends(get_current_user), db: Session = Depends(get_session)):
-    if payload.amount <= 0:
-        raise HTTPException(status_code=400, detail="Valid amount is required")
-        
-    stmt_host = select(Host).where(Host.user_id == user.id)
-    host = db.exec(stmt_host).first()
-    if not host:
-        raise HTTPException(status_code=403, detail="Only hosts can withdraw funds")
-        
-    try:
-        new_balance = host.withdraw_money(db, payload.amount, payload.description)
-        return {
-            "message": "Funds withdrawn successfully",
-            "new_balance": float(new_balance),
-            "amount_withdrawn": payload.amount
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/withdraw_funds/", response_model=BalanceResponse)
+def withdraw_funds(payload: WalletUpdatePayload, host: Host = Depends(get_current_host), db: Session = Depends(get_session)):
+    if not settings.simulated_payments:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Withdrawals aren't available yet.")
+    wallet = wallet_of(db, host_id=host.id)
+    if wallet.balance < payload.amount:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "You can't withdraw more than your balance.")
+    post(db, wallet, "WITHDRAWAL", payload.amount, payload.description or "Withdrawal")
+    db.commit()
+    return BalanceResponse(balance=wallet.balance)

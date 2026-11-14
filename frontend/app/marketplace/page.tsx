@@ -1,304 +1,114 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
-import { DashboardLayout } from "@/components/layout/dashboard-layout"
-import { ProtectedRoute } from "@/components/auth/protected-route"
-import { GPUFilters } from "@/components/marketplace/gpu-filters"
-import { AvailableGPUCard } from "@/components/dashboard/available-gpu-card"
-import { RentGPUDialog } from "@/components/marketplace/rent-gpu-dialog"
+import { useMemo, useState } from "react"
+import { Search } from "lucide-react"
+import { AppShell } from "@/components/app/shell"
+import { RentDialog } from "@/components/app/rent-dialog"
+import { Empty, LoadError, PageHeader, Skeleton, Table, rs } from "@/components/app/ui"
 import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { useAppStore } from "@/lib/app-store"
-import { useAuthStore } from "@/lib/auth-store"
-import type { GPU } from "@/lib/types"
-import { Grid, List, SlidersHorizontal } from "lucide-react"
-import { useToast } from "@/hooks/use-toast"
+import { Input } from "@/components/ui/input"
+import { api } from "@/lib/api"
+import { useLoad } from "@/lib/use-load"
+import { cn } from "@/lib/utils"
+
+const VRAM = [
+  { id: "all", label: "All", test: () => true },
+  { id: "low", label: "< 16 GB", test: (m: number) => m < 16 },
+  { id: "mid", label: "16–24 GB", test: (m: number) => m >= 16 && m < 24 },
+  { id: "high", label: "24 GB+", test: (m: number) => m >= 24 },
+]
+
+const SORT = {
+  price: { label: "Lowest price", fn: (a: { gpu_price: number }, b: { gpu_price: number }) => a.gpu_price - b.gpu_price },
+  vram: { label: "Most VRAM", fn: (a: { gpu_memory: number }, b: { gpu_memory: number }) => b.gpu_memory - a.gpu_memory },
+}
 
 export default function MarketplacePage() {
-  const router = useRouter()
-  const { role, isAuthenticated } = useAuthStore()
-  const { gpus, loading, error, fetchGPUs, wallet, fetchWallet, fetchSessions } = useAppStore()
-  const { toast } = useToast()
+  return (
+    <AppShell only="RENTER">
+      <Marketplace />
+    </AppShell>
+  )
+}
 
-  const [filteredGPUs, setFilteredGPUs] = useState<GPU[]>([])
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
-  const [sortBy, setSortBy] = useState("price-low")
-  const [selectedGPU, setSelectedGPU] = useState<GPU | null>(null)
-  const [rentDialogOpen, setRentDialogOpen] = useState(false)
-  const [showFilters, setShowFilters] = useState(true)
+function Marketplace() {
+  const { data, error, loading, reload } = useLoad(api.getAvailableGPUs, 15_000)
+  const [query, setQuery] = useState("")
+  const [vram, setVram] = useState("all")
+  const [sort, setSort] = useState<keyof typeof SORT>("price")
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      fetchGPUs()
-      fetchWallet().catch(() => {})
-    }
-  }, [isAuthenticated, fetchGPUs, fetchWallet])
-
-  useEffect(() => {
-    const availableGPUs = gpus.filter((gpu) => gpu.gpu_availability)
-    setFilteredGPUs(availableGPUs)
-  }, [gpus])
-
-  const handleSearch = (query: string) => {
-    if (!query.trim()) {
-      setFilteredGPUs(gpus.filter((gpu) => gpu.gpu_availability))
-      return
-    }
-
-    const filtered = gpus.filter(
-      (gpu) =>
-        gpu.gpu_availability &&
-        (gpu.gpu_name.toLowerCase().includes(query.toLowerCase()) ||
-        gpu.gpu_model.toLowerCase().includes(query.toLowerCase()) ||
-        gpu.gpu_location.toLowerCase().includes(query.toLowerCase())),
-    )
-    setFilteredGPUs(filtered)
-  }
-
-  const handleFiltersChange = (filters: any) => {
-    let filtered = gpus.filter((gpu) => gpu.gpu_availability)
-
-    // Filter by price range
-    if (filters.priceRange) {
-      filtered = filtered.filter(
-        (gpu) => gpu.gpu_price >= filters.priceRange[0] && gpu.gpu_price <= filters.priceRange[1],
-      )
-    }
-
-    // Filter by memory range
-    if (filters.memoryRange) {
-      filtered = filtered.filter(
-        (gpu) => gpu.gpu_memory >= filters.memoryRange[0] && gpu.gpu_memory <= filters.memoryRange[1],
-      )
-    }
-
-    // Filter by availability
-    if (filters.availability) {
-      filtered = filtered.filter((gpu) => gpu.gpu_availability)
-    }
-
-    // Filter by locations
-    if (filters.locations && filters.locations.length > 0) {
-      filtered = filtered.filter((gpu) => filters.locations.includes(gpu.gpu_location))
-    }
-
-    // Filter by models
-    if (filters.models && filters.models.length > 0) {
-      filtered = filtered.filter((gpu) => filters.models.includes(gpu.gpu_model))
-    }
-
-    setFilteredGPUs(filtered)
-  }
-
-  const handleSort = (sortValue: string) => {
-    setSortBy(sortValue)
-    const sorted = [...filteredGPUs]
-
-    switch (sortValue) {
-      case "price-low":
-        sorted.sort((a, b) => a.gpu_price - b.gpu_price)
-        break
-      case "price-high":
-        sorted.sort((a, b) => b.gpu_price - a.gpu_price)
-        break
-      case "memory-high":
-        sorted.sort((a, b) => b.gpu_memory - a.gpu_memory)
-        break
-      case "memory-low":
-        sorted.sort((a, b) => a.gpu_memory - b.gpu_memory)
-        break
-      case "newest":
-        sorted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        break
-      default:
-        break
-    }
-
-    setFilteredGPUs(sorted)
-  }
-
-  const handleRentGPU = (gpu: GPU) => {
-    setSelectedGPU(gpu)
-    setRentDialogOpen(true)
-  }
-
-  const handleConfirmRent = async (gpu: GPU, hours: number) => {
-    try {
-      // Pre-check wallet funds
-      const balance = wallet?.balance ?? 0
-      if (balance < gpu.gpu_price) {
-        toast({
-          title: "Insufficient funds",
-          description: `You need at least Rs.${gpu.gpu_price} to rent this GPU. Current balance: Rs.${balance}.`,
-          variant: "destructive",
-        })
-        return
-      }
-      // Session was created inside the dialog. Refresh sessions and redirect.
-      await fetchSessions()
-      setRentDialogOpen(false)
-      setSelectedGPU(null)
-      router.push("/sessions")
-      console.log(`Requested rental for ${gpu.gpu_name}. Waiting for agent to start.`)
-    } catch (error) {
-      console.error("Failed to rent GPU:", error)
-      const message = error instanceof Error ? error.message : "Failed to rent GPU"
-      toast({ title: "Rental failed", description: message, variant: "destructive" })
-    }
-  }
-
-  // Add loading state for authentication
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-2 text-muted-foreground">Loading authentication...</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (role === "HOST") {
-    return (
-      <ProtectedRoute>
-        <DashboardLayout>
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <h2 className="text-2xl font-bold mb-4">Access Restricted</h2>
-              <p className="text-muted-foreground mb-4">
-                The marketplace is only available to renters. As a host, you can manage your GPUs from the dashboard.
-              </p>
-              <Button onClick={() => router.push("/dashboard")}>Go to Dashboard</Button>
-            </div>
-          </div>
-        </DashboardLayout>
-      </ProtectedRoute>
-    )
-  }
-
-  if (loading) {
-    return (
-      <ProtectedRoute requiredRole="RENTER">
-        <DashboardLayout>
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-              <p className="mt-2 text-muted-foreground">Loading marketplace...</p>
-            </div>
-          </div>
-        </DashboardLayout>
-      </ProtectedRoute>
-    )
-  }
-
-  if (error) {
-    return (
-      <ProtectedRoute requiredRole="RENTER">
-        <DashboardLayout>
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <p className="text-destructive mb-2">Error loading marketplace</p>
-              <p className="text-sm text-muted-foreground">{error}</p>
-            </div>
-          </div>
-        </DashboardLayout>
-      </ProtectedRoute>
-    )
-  }
+  const gpus = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const test = VRAM.find((v) => v.id === vram)!.test
+    return (data ?? [])
+      .filter((g) => !q || [g.gpu_name, g.gpu_model, g.gpu_location, g.host_name].some((s) => s?.toLowerCase().includes(q)))
+      .filter((g) => test(g.gpu_memory))
+      .sort(SORT[sort].fn)
+  }, [data, query, vram, sort])
 
   return (
-    <ProtectedRoute requiredRole="RENTER">
-      <DashboardLayout>
-        <div className="space-y-6">
-          {/* Header */}
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold">GPU Marketplace</h1>
-              <p className="text-muted-foreground">Browse and rent GPU computing power from verified hosts</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowFilters(!showFilters)}>
-                <SlidersHorizontal className="mr-2 h-4 w-4" />
-                Filters
-              </Button>
-              <div className="flex items-center border rounded-md">
-                <Button
-                  variant={viewMode === "grid" ? "default" : "ghost"}
-                  size="sm"
-                  onClick={() => setViewMode("grid")}
-                >
-                  <Grid className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant={viewMode === "list" ? "default" : "ghost"}
-                  size="sm"
-                  onClick={() => setViewMode("list")}
-                >
-                  <List className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          </div>
+    <>
+      <PageHeader title="Rent a GPU" description="These GPUs are online and free right now. Prices are per hour." />
 
-          {/* Controls */}
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">
-              {filteredGPUs.length} GPU{filteredGPUs.length !== 1 ? "s" : ""} available
-            </p>
-            <Select value={sortBy} onValueChange={handleSort}>
-              <SelectTrigger className="w-48">
-                <SelectValue placeholder="Sort by" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="price-low">Price: Low to High</SelectItem>
-                <SelectItem value="price-high">Price: High to Low</SelectItem>
-                <SelectItem value="memory-high">Memory: High to Low</SelectItem>
-                <SelectItem value="memory-low">Memory: Low to High</SelectItem>
-                <SelectItem value="newest">Newest First</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Main Content */}
-          <div className="grid gap-6 lg:grid-cols-4">
-            {/* Filters Sidebar */}
-            {showFilters && (
-              <div className="lg:col-span-1">
-                <GPUFilters onFiltersChange={handleFiltersChange} onSearch={handleSearch} />
-              </div>
-            )}
-
-            {/* GPU Grid */}
-            <div className={showFilters ? "lg:col-span-3" : "lg:col-span-4"}>
-              {filteredGPUs.length === 0 ? (
-                <div className="text-center py-12">
-                  <div className="text-muted-foreground">
-                    <Grid className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                    <p className="text-lg font-medium">No GPUs found</p>
-                    <p className="text-sm">Try adjusting your filters or search terms</p>
-                  </div>
-                </div>
-              ) : (
-                <div className={`grid gap-4 ${viewMode === "grid" ? "md:grid-cols-2 xl:grid-cols-3" : "grid-cols-1"}`}>
-                  {filteredGPUs.map((gpu) => (
-                    <AvailableGPUCard key={gpu.id} gpu={gpu} onRent={handleRentGPU} />
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+      <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Filter by VRAM">
+          {VRAM.map((v) => (
+            <button
+              key={v.id}
+              aria-pressed={vram === v.id}
+              onClick={() => setVram(v.id)}
+              className={cn("rounded-sm border px-3 py-1.5 text-caption transition-colors", vram === v.id ? "border-neon-glow text-whiteout" : "border-graphite-light text-ash hover:text-whiteout")}
+            >
+              {v.label}
+            </button>
+          ))}
+          <span className="mx-2 h-5 w-px bg-graphite-light" aria-hidden />
+          {(Object.keys(SORT) as (keyof typeof SORT)[]).map((k) => (
+            <button
+              key={k}
+              aria-pressed={sort === k}
+              onClick={() => setSort(k)}
+              className={cn("rounded-sm border px-3 py-1.5 text-caption transition-colors", sort === k ? "border-neon-glow text-whiteout" : "border-graphite-light text-ash hover:text-whiteout")}
+            >
+              {SORT[k].label}
+            </button>
+          ))}
         </div>
+        <label className="relative md:w-72">
+          <span className="sr-only">Search GPUs</span>
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-pewter" aria-hidden />
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search model, location or host" className="pl-9" />
+        </label>
+      </div>
 
-        {/* Rent GPU Dialog */}
-        <RentGPUDialog
-          gpu={selectedGPU}
-          open={rentDialogOpen}
-          onOpenChange={setRentDialogOpen}
-          onConfirm={handleConfirmRent}
+      {loading ? (
+        <Skeleton rows={4} />
+      ) : !data ? (
+        <LoadError message={error ?? ""} onRetry={reload} />
+      ) : gpus.length === 0 ? (
+        <Empty
+          title={data.length ? "No GPUs match these filters" : "No GPUs are free right now"}
+          body={data.length ? "Choose a different VRAM range or clear the search." : "GPUs appear here when a host's agent is running and the GPU isn't rented. This list refreshes on its own."}
         />
-      </DashboardLayout>
-    </ProtectedRoute>
+      ) : (
+        <Table head={[{ label: "GPU" }, { label: "VRAM", right: true }, { label: "Location" }, { label: "Host" }, { label: "Price", right: true }, { label: "" }]}>
+          {gpus.map((g) => (
+            <tr key={g.id} className="transition-colors hover:bg-graphite">
+              <td className="px-5 py-4">
+                <div className="font-medium">{g.gpu_name}</div>
+                {g.gpu_model && <div className="font-mono text-caption text-pewter">{g.gpu_model}</div>}
+              </td>
+              <td className="px-5 py-4 text-right font-mono tabular-nums">{g.gpu_memory} GB</td>
+              <td className="px-5 py-4 text-ash">{g.gpu_location}</td>
+              <td className="px-5 py-4 text-ash">{g.host_name}</td>
+              <td className="px-5 py-4 text-right font-mono tabular-nums">{rs(g.gpu_price)}<span className="text-ash">/hr</span></td>
+              <td className="px-5 py-4 text-right">
+                <RentDialog gpu={g}><Button size="sm">Rent GPU</Button></RentDialog>
+              </td>
+            </tr>
+          ))}
+        </Table>
+      )}
+    </>
   )
 }

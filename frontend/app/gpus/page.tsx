@@ -1,144 +1,192 @@
 "use client"
 
-import { useEffect } from "react"
-import { DashboardLayout } from "@/components/layout/dashboard-layout"
-import { ProtectedRoute } from "@/components/auth/protected-route"
-import { GPUCard } from "@/components/dashboard/gpu-card"
+import { useState, type FormEvent } from "react"
+import { Download } from "lucide-react"
+import { AppShell } from "@/components/app/shell"
+import { Empty, LoadError, PageHeader, Section, Skeleton, Table, rs } from "@/components/app/ui"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { useAppStore } from "@/lib/app-store"
-import { Plus, Cpu } from "lucide-react"
-import { LabhyaAgentDialog } from "@/components/dialogs/labhya-agent-dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
+import { useToast } from "@/hooks/use-toast"
+import { api } from "@/lib/api"
 import type { GPU } from "@/lib/types"
+import { useLoad } from "@/lib/use-load"
 
 export default function GPUsPage() {
-  const { gpus, loading, error, fetchGPUs } = useAppStore()
+  return (
+    <AppShell only="HOST">
+      <MyGPUs />
+    </AppShell>
+  )
+}
 
-  useEffect(() => {
-    fetchGPUs()
-  }, [fetchGPUs])
+function MyGPUs() {
+  const { data: gpus, error, loading, reload } = useLoad(api.getMyGPUs, 15_000)
+  const [editing, setEditing] = useState<GPU | null>(null)
+  const [removing, setRemoving] = useState<GPU | null>(null)
 
-  // gpus already filtered to current host in fetchGPUs (for host role)
+  const header = <PageHeader title="My GPUs" description="GPUs your desktop agent has listed. Set the price and whether each one can be rented." />
+  if (loading) return <>{header}<Skeleton /></>
+  if (!gpus) return <>{header}<LoadError message={error ?? ""} onRetry={reload} /></>
 
-  if (loading) {
-    return (
-      <ProtectedRoute requiredRole="HOST">
-        <DashboardLayout>
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-              <p className="mt-2 text-muted-foreground">Loading your GPUs...</p>
-            </div>
+  const status = (g: GPU) => (g.is_rented ? "Rented" : g.gpu_availability ? "Available" : "Not for rent")
+
+  return (
+    <>
+      {header}
+      {gpus.length === 0 ? (
+        <Empty
+          title="No GPUs listed yet"
+          body="Install the desktop agent on the PC with your GPU and log in with this account. The agent detects your GPU and lists it here."
+          action={<Button asChild><a href="/downloads/LabhyaComputeAgentSetup.exe" download><Download aria-hidden /> Download agent for Windows</a></Button>}
+        />
+      ) : (
+        <Table head={[{ label: "GPU" }, { label: "VRAM", right: true }, { label: "Location" }, { label: "Price", right: true }, { label: "Status" }, { label: "" }]}>
+          {gpus.map((g) => {
+            const rented = g.is_rented
+            return (
+              <tr key={g.id} className="hover:bg-graphite">
+                <td className="px-5 py-4">
+                  <div className="font-medium">{g.gpu_name}</div>
+                  {g.gpu_model && <div className="font-mono text-caption text-pewter">{g.gpu_model}</div>}
+                </td>
+                <td className="px-5 py-4 text-right font-mono tabular-nums">{g.gpu_memory} GB</td>
+                <td className="px-5 py-4 text-ash">{g.gpu_location}</td>
+                <td className="px-5 py-4 text-right font-mono tabular-nums">{rs(g.gpu_price)}<span className="text-ash">/hr</span></td>
+                <td className="px-5 py-4">
+                  <span className="inline-flex items-center gap-2 text-caption text-cloud">
+                    <span className={`h-1.5 w-1.5 rounded-full ${rented ? "bg-cloud" : g.gpu_availability ? "bg-neon-glow" : "bg-ash"}`} aria-hidden />
+                    {status(g)}
+                  </span>
+                </td>
+                <td className="whitespace-nowrap px-5 py-4 text-right">
+                  <Button variant="ghost" size="sm" onClick={() => setEditing(g)}>Edit</Button>
+                  <Button variant="ghost" size="sm" className="text-system-warning hover:text-system-warning" onClick={() => setRemoving(g)} disabled={rented} title={rented ? "End the session before removing this GPU" : undefined}>
+                    Remove
+                  </Button>
+                </td>
+              </tr>
+            )
+          })}
+        </Table>
+      )}
+
+      <Section title="Desktop agent">
+        <div className="rounded-sm border border-graphite-light bg-graphite-deep p-5 text-body-sm text-ash sm:p-6">
+          <p>
+            The agent runs on your Windows PC. It lists your GPU, starts a Docker container when someone rents it, and reports GPU use while the session runs.
+            Keep it open whenever your GPU is available to rent. It needs Windows 10 or 11, WSL2 and Docker Desktop.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <Button variant="outline" size="sm" asChild><a href="/downloads/LabhyaComputeAgentSetup.exe" download><Download aria-hidden /> Installer (.exe)</a></Button>
+            <Button variant="outline" size="sm" asChild><a href="/downloads/LabhyaComputeAgent.exe" download><Download aria-hidden /> Portable (.exe)</a></Button>
           </div>
-        </DashboardLayout>
-      </ProtectedRoute>
-    )
-  }
+        </div>
+      </Section>
 
-  if (error) {
-    return (
-      <ProtectedRoute requiredRole="HOST">
-        <DashboardLayout>
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <p className="text-destructive mb-2">Error loading GPUs</p>
-              <p className="text-sm text-muted-foreground">{error}</p>
-            </div>
-          </div>
-        </DashboardLayout>
-      </ProtectedRoute>
-    )
+      {editing && <EditGPU gpu={editing} onClose={() => setEditing(null)} onSaved={reload} />}
+      {removing && <RemoveGPU gpu={removing} onClose={() => setRemoving(null)} onRemoved={reload} />}
+    </>
+  )
+}
+
+function EditGPU({ gpu, onClose, onSaved }: { gpu: GPU; onClose: () => void; onSaved: () => void }) {
+  const { toast } = useToast()
+  const [available, setAvailable] = useState(gpu.gpu_availability)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    const f = new FormData(e.currentTarget)
+    const price = Number(f.get("price"))
+    const location = String(f.get("location")).trim()
+    if (!Number.isInteger(price) || price < 1) return setError("Enter a whole number of rupees, 1 or more.")
+    if (!location) return setError("Enter where this GPU is located.")
+    setBusy(true)
+    setError(null)
+    try {
+      await api.updateGPU(gpu.id, { gpu_price: price, gpu_location: location, gpu_availability: available })
+      toast({ title: `${gpu.gpu_name} updated` })
+      onSaved()
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save. Try again.")
+      setBusy(false)
+    }
   }
 
   return (
-    <ProtectedRoute requiredRole="HOST">
-      <DashboardLayout>
-        <div className="space-y-6">
-          {/* Header */}
-          <div className="flex items-center justify-between">
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <form onSubmit={submit} className="grid gap-6">
+          <DialogHeader>
+            <DialogTitle>Edit {gpu.gpu_name}</DialogTitle>
+            <DialogDescription className="text-body-sm text-ash">Changes apply to new sessions. A session that's already running keeps its price.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-5">
             <div>
-              <h1 className="text-3xl font-bold">My GPUs</h1>
-              <p className="text-muted-foreground">Manage your GPU resources and monitor their performance</p>
+              <label htmlFor="price" className="mb-1.5 block text-body-sm">Price per hour (NPR)</label>
+              <Input id="price" name="price" type="number" min="1" step="1" defaultValue={gpu.gpu_price} required />
             </div>
-            <LabhyaAgentDialog>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" />
-                Add GPU
-              </Button>
-            </LabhyaAgentDialog>
-          </div>
-
-          {/* Stats Cards */}
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total GPUs</CardTitle>
-                <Cpu className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{gpus.length}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Available</CardTitle>
-                <div className="h-2 w-2 bg-green-500 rounded-full" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{gpus.filter((gpu) => gpu.gpu_availability).length}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">In Use</CardTitle>
-                <div className="h-2 w-2 bg-blue-500 rounded-full" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{gpus.filter((gpu) => !gpu.gpu_availability).length}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Avg. Price</CardTitle>
-                <span className="text-xs text-muted-foreground">NPR/hr</span>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  Rs.{" "}
-                  {gpus.length > 0
-                    ? Math.round(gpus.reduce((sum, gpu) => sum + gpu.gpu_price, 0) / gpus.length)
-                    : 0}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* GPU Grid */}
-          {gpus.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <Cpu className="h-12 w-12 text-muted-foreground mb-4" />
-                <CardTitle className="mb-2">No GPUs Added</CardTitle>
-                <CardDescription className="text-center mb-4">
-                  Start earning by adding your GPU resources to the platform
-                </CardDescription>
-                <LabhyaAgentDialog>
-                  <Button>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add Your First GPU
-                  </Button>
-                </LabhyaAgentDialog>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-              {gpus.map((gpu) => (
-                <GPUCard key={gpu.id} gpu={gpu} />
-              ))}
+            <div>
+              <label htmlFor="location" className="mb-1.5 block text-body-sm">Location</label>
+              <Input id="location" name="location" defaultValue={gpu.gpu_location} required />
+              <p className="mt-1.5 text-caption text-pewter">City or area. Renters see this.</p>
             </div>
-          )}
-        </div>
-      </DashboardLayout>
-    </ProtectedRoute>
+            <div className="flex items-start justify-between gap-4 rounded-sm border border-graphite-light p-4">
+              <div>
+                <label htmlFor="available" className="text-body-sm">Available to rent</label>
+                <p className="mt-0.5 text-caption text-ash">
+                  {gpu.is_rented ? "Turn off to stop new rentals. The running session isn't affected." : "Turn off to hide this GPU from renters."}
+                </p>
+              </div>
+              <Switch id="available" checked={available} onCheckedChange={setAvailable} />
+            </div>
+          </div>
+          {error && <p role="alert" className="text-body-sm text-system-warning">{error}</p>}
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={busy}>{busy ? "Saving…" : "Save changes"}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function RemoveGPU({ gpu, onClose, onRemoved }: { gpu: GPU; onClose: () => void; onRemoved: () => void }) {
+  const { toast } = useToast()
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const remove = async () => {
+    setBusy(true)
+    try {
+      await api.deleteGPU(gpu.id)
+      toast({ title: `${gpu.gpu_name} removed` })
+      onRemoved()
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't remove it. Try again.")
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Remove {gpu.gpu_name}?</DialogTitle>
+          <DialogDescription className="text-body-sm text-ash">
+            Renters won't see it any more. To list it again, register it from the desktop agent.
+          </DialogDescription>
+        </DialogHeader>
+        {error && <p role="alert" className="text-body-sm text-system-warning">{error}</p>}
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose}>Keep it</Button>
+          <Button variant="destructive" onClick={remove} disabled={busy}>{busy ? "Removing…" : "Remove GPU"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

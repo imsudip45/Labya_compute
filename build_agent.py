@@ -6,10 +6,17 @@ packages it into a Nullsoft Installer (.exe setup), and places both
 in the static downloads folder of the Next.js frontend website.
 """
 
+import hashlib
 import os
 import sys
 import shutil
 import subprocess
+import urllib.request
+
+# cloudflared connects hosts to renters (see backend/app/cloudflare.py). Pinned and checked
+# against the checksum Cloudflare publishes with the release.
+CLOUDFLARED_VERSION = "2026.10.7"
+CLOUDFLARED_SHA256 = "2493dbc168923bb3e59e5e7716f71deced92992eea9acd6e9d74f84ac7751343"
 
 def log(msg):
     print(f"[BUILD LOG] {msg}", flush=True)
@@ -32,13 +39,36 @@ def main():
         subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller", "requests"], check=True)
         log("PyInstaller installed successfully.")
     
-    # 2. Run PyInstaller to build executable
+    # 2. Fetch cloudflared and record which API the agent talks to
+    api_url = os.environ.get("LABHYA_API_URL", "").rstrip("/")
+    if not api_url.endswith("/api"):
+        log("Error: set LABHYA_API_URL to the deployed API, ending in /api (e.g. https://labhya.fastapicloud.dev/api)")
+        sys.exit(1)
+    bundle_dir = os.path.join(root_dir, "build", "bundle")
+    os.makedirs(bundle_dir, exist_ok=True)
+    with open(os.path.join(bundle_dir, "api_url.txt"), "w", encoding="utf-8") as f:
+        f.write(api_url)
+    cloudflared = os.path.join(bundle_dir, "cloudflared.exe")
+    url = f"https://github.com/cloudflare/cloudflared/releases/download/{CLOUDFLARED_VERSION}/cloudflared-windows-amd64.exe"
+    log(f"Downloading cloudflared {CLOUDFLARED_VERSION}...")
+    with urllib.request.urlopen(url, timeout=120) as r:
+        data = r.read()
+    if hashlib.sha256(data).hexdigest() != CLOUDFLARED_SHA256:
+        log("Error: cloudflared checksum doesn't match. Not building.")
+        sys.exit(1)
+    with open(cloudflared, "wb") as f:
+        f.write(data)
+
+    # 3. Run PyInstaller to build executable
     log("Building standalone executable with PyInstaller...")
+    sep = ";" if sys.platform.startswith("win") else ":"
     build_cmd = [
         "pyinstaller",
         "--onefile",
         "--noconsole",
         "--name", "LabhyaComputeAgent",
+        "--add-binary", f"{cloudflared}{sep}.",
+        "--add-data", f"{os.path.join(bundle_dir, 'api_url.txt')}{sep}.",
         agent_script
     ]
     
@@ -56,7 +86,7 @@ def main():
         log(f"Error: Compiled file not found at expected location: {compiled_file}")
         sys.exit(1)
         
-    # 3. Compile NSIS Installer Setup if on Windows
+    # 4. Compile NSIS Installer Setup if on Windows
     nsis_path = r"C:\Program Files (x86)\NSIS\makensis.exe"
     nsis_compiled = False
     
@@ -131,10 +161,9 @@ SectionEnd
     else:
         log("NSIS compiler not found or not on Windows. Skipping installer setup packaging.")
 
-    # 4. Create target directory and copy binary & raw Python script
+    # 5. Create target directory and copy the binaries
     os.makedirs(dist_dest, exist_ok=True)
     destination_file = os.path.join(dist_dest, binary_name)
-    destination_py = os.path.join(dist_dest, "LabhyaComputeAgent.py")
     
     log(f"Copying compiled binary to destination: {destination_file}")
     shutil.copy2(compiled_file, destination_file)
@@ -148,11 +177,8 @@ SectionEnd
             shutil.copy2(setup_src, setup_dest)
             log(f"[SUCCESS] Installer setup successfully deployed to web portal at /downloads/LabhyaComputeAgentSetup.exe")
 
-    log(f"Copying raw Python script to destination: {destination_py}")
-    shutil.copy2(agent_script, destination_py)
-    log(f"[SUCCESS] Python script successfully deployed to web portal at /downloads/LabhyaComputeAgent.py")
     
-    # 5. Clean up PyInstaller build files
+    # 6. Clean up PyInstaller build files
     log("Cleaning up intermediate build files...")
     for folder in ["build", "dist"]:
         path = os.path.join(root_dir, folder)

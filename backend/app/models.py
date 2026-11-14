@@ -1,321 +1,145 @@
+"""Database tables. Schema changes need an Alembic migration (see README)."""
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
-from typing import List, Optional
-from sqlmodel import Field, Relationship, SQLModel, Session, select
+from typing import Optional
+
+from sqlalchemy import CheckConstraint
+from sqlmodel import Field, SQLModel
+
+
+def utcnow() -> datetime:
+    """All stored times are timezone-aware UTC."""
+    return datetime.now(timezone.utc)
+
+
+def _updated():
+    return Field(default_factory=utcnow, sa_column_kwargs={"onupdate": utcnow})
+
 
 class User(SQLModel, table=True):
-    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
-    email: str = Field(unique=True, index=True)
-    hashed_password: str
-    first_name: str
-    last_name: str = ""
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    
-    # Relationships
-    renter_profile: Optional["Renter"] = Relationship(back_populates="user", sa_relationship_kwargs={"uselist": False, "cascade": "all, delete-orphan"})
-    host_profile: Optional["Host"] = Relationship(back_populates="user", sa_relationship_kwargs={"uselist": False, "cascade": "all, delete-orphan"})
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    email: str = Field(unique=True, index=True, max_length=254)  # stored lowercase
+    hashed_password: str = Field(max_length=100)
+    first_name: str = Field(max_length=100)
+    last_name: str = Field(default="", max_length=100)
+    # Bumped on logout to revoke every token issued before it.
+    token_version: int = 0
+    failed_logins: int = 0
+    locked_until: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+    @property
+    def display_name(self) -> str:
+        return f"{self.first_name} {self.last_name}".strip() or self.email
+
 
 class Renter(SQLModel, table=True):
-    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: uuid.UUID = Field(foreign_key="user.id", unique=True)
-    
-    # Relationships
-    user: User = Relationship(back_populates="renter_profile")
-    wallet: Optional["Wallet"] = Relationship(back_populates="renter", sa_relationship_kwargs={"uselist": False, "cascade": "all, delete-orphan"})
-    sessions: List["Session"] = Relationship(back_populates="renter")
 
-    def get_wallet(self, db_session: Session) -> "Wallet":
-        statement = select(Wallet).where(Wallet.renter_id == self.id)
-        wallet = db_session.exec(statement).first()
-        if not wallet:
-            wallet = Wallet(renter_id=self.id, balance=Decimal("0.00"))
-            db_session.add(wallet)
-            db_session.commit()
-            db_session.refresh(wallet)
-        return wallet
-
-    def add_money(self, db_session: Session, amount: float, description: str = "Deposit") -> Decimal:
-        wallet = self.get_wallet(db_session)
-        wallet.balance += Decimal(str(amount))
-        db_session.add(wallet)
-        
-        transaction = Transaction(
-            wallet_id=wallet.id,
-            transaction_type="DEPOSIT",
-            amount=Decimal(str(amount)),
-            description=description,
-            status="COMPLETED"
-        )
-        db_session.add(transaction)
-        db_session.commit()
-        db_session.refresh(wallet)
-        return wallet.balance
-
-    def pay_for_rental(self, db_session: Session, amount: float, description: str = "Rental payment") -> Decimal:
-        wallet = self.get_wallet(db_session)
-        if wallet.balance < Decimal(str(amount)):
-            raise ValueError("Insufficient balance")
-        wallet.balance -= Decimal(str(amount))
-        db_session.add(wallet)
-        
-        transaction = Transaction(
-            wallet_id=wallet.id,
-            transaction_type="RENTAL_PAYMENT",
-            amount=Decimal(str(amount)),
-            description=description,
-            status="COMPLETED"
-        )
-        db_session.add(transaction)
-        db_session.commit()
-        db_session.refresh(wallet)
-        return wallet.balance
 
 class Host(SQLModel, table=True):
-    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: uuid.UUID = Field(foreign_key="user.id", unique=True)
-    
-    # Relationships
-    user: User = Relationship(back_populates="host_profile")
-    wallet: Optional["Wallet"] = Relationship(back_populates="host", sa_relationship_kwargs={"uselist": False, "cascade": "all, delete-orphan"})
-    gpus: List["GPU"] = Relationship(back_populates="host")
-    sessions: List["Session"] = Relationship(back_populates="host")
+    # The Cloudflare tunnel this host's agent runs, created the first time the agent asks.
+    tunnel_id: Optional[str] = Field(default=None, max_length=64)
 
-    def get_wallet(self, db_session: Session) -> "Wallet":
-        statement = select(Wallet).where(Wallet.host_id == self.id)
-        wallet = db_session.exec(statement).first()
-        if not wallet:
-            wallet = Wallet(host_id=self.id, balance=Decimal("0.00"))
-            db_session.add(wallet)
-            db_session.commit()
-            db_session.refresh(wallet)
-        return wallet
-
-    def add_earning(self, db_session: Session, amount: float, description: str = "Rental earning") -> Decimal:
-        wallet = self.get_wallet(db_session)
-        wallet.balance += Decimal(str(amount))
-        db_session.add(wallet)
-        
-        transaction = Transaction(
-            wallet_id=wallet.id,
-            transaction_type="RENTAL_EARNING",
-            amount=Decimal(str(amount)),
-            description=description,
-            status="COMPLETED"
-        )
-        db_session.add(transaction)
-        db_session.commit()
-        db_session.refresh(wallet)
-        return wallet.balance
-
-    def withdraw_money(self, db_session: Session, amount: float, description: str = "Withdrawal") -> Decimal:
-        wallet = self.get_wallet(db_session)
-        if wallet.balance < Decimal(str(amount)):
-            raise ValueError("Insufficient balance")
-        wallet.balance -= Decimal(str(amount))
-        db_session.add(wallet)
-        
-        transaction = Transaction(
-            wallet_id=wallet.id,
-            transaction_type="WITHDRAWAL",
-            amount=Decimal(str(amount)),
-            description=description,
-            status="COMPLETED"
-        )
-        db_session.add(transaction)
-        db_session.commit()
-        db_session.refresh(wallet)
-        return wallet.balance
 
 class Wallet(SQLModel, table=True):
-    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
-    renter_id: Optional[uuid.UUID] = Field(foreign_key="renter.id", unique=True, nullable=True)
-    host_id: Optional[uuid.UUID] = Field(foreign_key="host.id", unique=True, nullable=True)
-    balance: Decimal = Field(default=Decimal("0.00"), max_digits=10, decimal_places=2)
-    currency: str = "NPR"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    
-    # Relationships
-    renter: Optional[Renter] = Relationship(back_populates="wallet")
-    host: Optional[Host] = Relationship(back_populates="wallet")
-    transactions: List["Transaction"] = Relationship(back_populates="wallet")
+    __table_args__ = (
+        CheckConstraint("(renter_id IS NULL) <> (host_id IS NULL)", name="wallet_one_owner"),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    renter_id: Optional[uuid.UUID] = Field(default=None, foreign_key="renter.id", unique=True)
+    host_id: Optional[uuid.UUID] = Field(default=None, foreign_key="host.id", unique=True)
+    # Can go below zero if a session runs past the renter's balance; new rentals are then blocked.
+    balance: Decimal = Field(default=Decimal("0.00"), max_digits=12, decimal_places=2)
+    currency: str = Field(default="NPR", max_length=3)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = _updated()
 
-    def get_owner_name(self) -> str:
-        """Readable owner label, e.g. 'Renter: Jane Doe'."""
-        for label, owner in (("Renter", self.renter), ("Host", self.host)):
-            if owner is not None:
-                user = getattr(owner, "user", None)
-                if user is None:
-                    return label
-                name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email
-                return f"{label}: {name}"
-        return "Unknown"
 
 class Transaction(SQLModel, table=True):
-    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
-    wallet_id: uuid.UUID = Field(foreign_key="wallet.id")
-    transaction_type: str  # DEPOSIT, WITHDRAWAL, RENTAL_PAYMENT, RENTAL_EARNING
-    amount: Decimal = Field(max_digits=10, decimal_places=2)
-    status: str = "COMPLETED"  # PENDING, COMPLETED, FAILED, CANCELLED
-    description: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    
-    # Relationships
-    wallet: Wallet = Relationship(back_populates="transactions")
+    __table_args__ = (CheckConstraint("amount >= 0", name="transaction_amount_not_negative"),)
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    wallet_id: uuid.UUID = Field(foreign_key="wallet.id", index=True)
+    transaction_type: str = Field(max_length=20)  # DEPOSIT, WITHDRAWAL, RENTAL_PAYMENT, RENTAL_EARNING
+    amount: Decimal = Field(max_digits=12, decimal_places=2)
+    status: str = Field(default="COMPLETED", max_length=20)
+    description: Optional[str] = Field(default=None, max_length=200)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = _updated()
+
 
 class GPU(SQLModel, table=True):
-    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
-    host_id: uuid.UUID = Field(foreign_key="host.id")
-    gpu_name: str
-    gpu_model: Optional[str] = None
-    gpu_memory: int
-    gpu_price: int
+    __table_args__ = (
+        CheckConstraint("gpu_price > 0", name="gpu_price_positive"),
+        CheckConstraint("gpu_memory > 0", name="gpu_memory_positive"),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    host_id: uuid.UUID = Field(foreign_key="host.id", index=True)
+    gpu_name: str = Field(max_length=100)
+    gpu_model: Optional[str] = Field(default=None, max_length=100)
+    gpu_memory: int  # GB
+    gpu_price: int  # NPR per hour
+    # The host's choice to list it. Whether it is rented right now comes from its sessions.
     gpu_availability: bool = True
-    gpu_location: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    
-    # Relationships
-    host: Host = Relationship(back_populates="gpus")
-    sessions: List["Session"] = Relationship(back_populates="gpu")
+    gpu_location: str = Field(max_length=100)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = _updated()
+
+
+OPEN_STATUSES = ("PENDING", "ACTIVE")
+
 
 class Session(SQLModel, table=True):
-    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
-    gpu_id: uuid.UUID = Field(foreign_key="gpu.id")
-    renter_id: uuid.UUID = Field(foreign_key="renter.id")
-    host_id: uuid.UUID = Field(foreign_key="host.id")
-    
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    gpu_id: uuid.UUID = Field(foreign_key="gpu.id", index=True)
+    renter_id: uuid.UUID = Field(foreign_key="renter.id", index=True)
+    host_id: uuid.UUID = Field(foreign_key="host.id", index=True)
+    # Price per hour at the time of renting, so later price edits don't change the bill.
+    hourly_price: int
+
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
-    status: str = "PENDING"  # PENDING, ACTIVE, COMPLETED, CANCELLED, FAILED
-    
-    ssh_host: Optional[str] = None
-    ssh_port: Optional[int] = 22
-    ssh_username: Optional[str] = None
-    ssh_password: Optional[str] = None
-    
-    connection_status: str = "CONNECTING"  # CONNECTING, CONNECTED, DISCONNECTED, ERROR
-    connection_error: Optional[str] = None
+    status: str = Field(default="PENDING", max_length=20, index=True)  # PENDING, ACTIVE, COMPLETED, CANCELLED
+
+    ssh_host: Optional[str] = Field(default=None, max_length=255)  # sess-<id>.<tunnel_domain>, set when started
+    ssh_username: Optional[str] = Field(default=None, max_length=64)
+    ssh_password: Optional[str] = Field(default=None, max_length=128)
+    host_port: Optional[int] = None  # the container's SSH port on the host's PC
+    dns_record_id: Optional[str] = Field(default=None, max_length=64)
+
+    connection_status: str = Field(default="CONNECTING", max_length=20)  # CONNECTING, CONNECTED, DISCONNECTED, ERROR
+    connection_error: Optional[str] = Field(default=None, max_length=500)
     last_connected: Optional[datetime] = None
-    
+
     gpu_utilization: int = 0
     memory_utilization: int = 0
     temperature: int = 0
-    
-    is_auto_reconnect: bool = True
-    payment_transaction_id: Optional[uuid.UUID] = Field(foreign_key="transaction.id", nullable=True)
-    
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    
-    # Relationships
-    gpu: GPU = Relationship(back_populates="sessions")
-    renter: Renter = Relationship(back_populates="sessions")
-    host: Host = Relationship(back_populates="sessions")
-    relay_port: Optional["RelayPort"] = Relationship(back_populates="leased_to_session", sa_relationship_kwargs={"uselist": False})
 
-    def get_ssh_connection_string(self) -> Optional[str]:
-        if self.ssh_host and self.ssh_username:
-            return f"ssh {self.ssh_username}@{self.ssh_host} -p {self.ssh_port or 22}"
-        return None
+    total_cost: Decimal = Field(default=Decimal("0.00"), max_digits=12, decimal_places=2)  # set when it ends
+    payment_transaction_id: Optional[uuid.UUID] = Field(default=None, foreign_key="transaction.id")
 
-    def update_connection_status(self, status: str, error_message: Optional[str] = None) -> None:
-        self.connection_status = status
-        if error_message:
-            self.connection_error = error_message
-        if status == "CONNECTED":
-            self.last_connected = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
-
-    def update_gpu_metrics(self, gpu_util: int, memory_util: int, temp: int) -> None:
-        self.gpu_utilization = gpu_util
-        self.memory_utilization = memory_util
-        self.temperature = temp
-        self.updated_at = datetime.utcnow()
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = _updated()
 
     @property
-    def total_cost(self) -> Decimal:
+    def hours(self) -> float:
         if not self.start_time:
-            return Decimal("0.00")
-        end = self.end_time or datetime.utcnow()
-        duration = end - self.start_time
-        hours = duration.total_seconds() / 3600
-        return Decimal(str(round(self.gpu.gpu_price * hours, 2)))
+            return 0.0
+        return max(0.0, ((self.end_time or utcnow()) - self.start_time).total_seconds() / 3600)
 
-    def process_payment(self, db_session: Session) -> Decimal:
-        total_cost = self.total_cost
-        
-        # Renter pays
-        self.renter.pay_for_rental(
-            db_session=db_session,
-            amount=float(total_cost),
-            description=f"Payment for {self.gpu.gpu_name} rental"
-        )
-        
-        # Host receives
-        self.host.add_earning(
-            db_session=db_session,
-            amount=float(total_cost),
-            description=f"Earning from {self.gpu.gpu_name} rental"
-        )
-        
-        self.status = "COMPLETED"
-        db_session.add(self)
-        db_session.commit()
-        db_session.refresh(self)
-        return total_cost
+    def cost_so_far(self) -> Decimal:
+        if self.status not in OPEN_STATUSES:
+            return self.total_cost
+        return (Decimal(self.hourly_price) * Decimal(str(self.hours))).quantize(Decimal("0.01"))
 
-class RelayPort(SQLModel, table=True):
-    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
-    port: int = Field(unique=True)
-    status: str = "FREE"  # FREE, LEASED, RESERVED
-    leased_to_session_id: Optional[uuid.UUID] = Field(foreign_key="session.id", unique=True, nullable=True)
-    leased_at: Optional[datetime] = None
-    released_at: Optional[datetime] = None
-    notes: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    
-    # Relationships
-    leased_to_session: Optional[Session] = Relationship(back_populates="relay_port")
+    @property
+    def ssh_connection_string(self) -> Optional[str]:
+        # Cloudflare carries SSH over HTTPS, so the renter's ssh goes through cloudflared.
+        if self.ssh_host and self.ssh_username and self.status == "ACTIVE":
+            return f'ssh -o ProxyCommand="cloudflared access ssh --hostname %h" {self.ssh_username}@{self.ssh_host}'
+        return None
 
-    @classmethod
-    def lease_free_port(cls, db_session: Session, session_obj: Session, start_port: int, end_port: int) -> "RelayPort":
-        # Find FREE port using select_for_update for safety
-        statement = select(cls).where(cls.status == "FREE", cls.port >= start_port, cls.port <= end_port).order_by(cls.port).with_for_update()
-        free_port = db_session.exec(statement).first()
-        
-        if not free_port:
-            # Look up used port values
-            used_stmt = select(cls.port).where(cls.port >= start_port, cls.port <= end_port)
-            used = set(db_session.exec(used_stmt).all())
-            chosen = None
-            for p in range(start_port, end_port + 1):
-                if p not in used:
-                    chosen = p
-                    break
-            if chosen is None:
-                raise ValueError("No relay ports available in the configured range")
-            free_port = cls(port=chosen, status="FREE")
-            db_session.add(free_port)
-            db_session.commit()
-            db_session.refresh(free_port)
-            
-        free_port.status = "LEASED"
-        free_port.leased_to_session_id = session_obj.id
-        free_port.leased_at = datetime.utcnow()
-        free_port.released_at = None
-        db_session.add(free_port)
-        db_session.commit()
-        db_session.refresh(free_port)
-        return free_port
-
-    def release(self, db_session: Session):
-        self.status = "FREE"
-        self.released_at = datetime.utcnow()
-        self.leased_to_session_id = None
-        db_session.add(self)
-        db_session.commit()
-        db_session.refresh(self)

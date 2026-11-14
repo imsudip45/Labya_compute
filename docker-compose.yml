@@ -21,9 +21,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: labhya_backend
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
-    volumes:
-      - ./backend:/app
+    command: fastapi run --host 0.0.0.0 --port 8000  # migrates on start
     ports:
       - "8080:8000"
     environment:
@@ -43,9 +41,7 @@ services:
         - NEXT_PUBLIC_API_URL=http://localhost:8080/api
     container_name: labhya_frontend
     ports:
-      - "3001:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8080/api
+      - "3001:80"
     depends_on:
       - backend
 

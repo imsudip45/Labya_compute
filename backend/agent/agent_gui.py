@@ -23,7 +23,7 @@ import uuid
 try:
     from agent import (
         http, fetch_tokens, refresh_access, detect_gpu_info, detect_system_info,
-        ensure_dockerfiles, build_session_image, launch_container, start_relay_tunnel,
+        ensure_dockerfiles, build_session_image, launch_container,
         generate_password, get_available_templates
     )
 except ImportError:
@@ -130,7 +130,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/run/sshd
 # Create user
-RUN useradd -m -s /bin/bash labuser && echo 'labuser:changeme' | chpasswd && adduser labuser sudo
+# No password until the agent sets the session's own one (an unset password can't log in).
+RUN useradd -m -s /bin/bash labuser && adduser labuser sudo
 # Enable password auth
 RUN sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config \
     && sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
@@ -181,33 +182,21 @@ CMD ["/usr/sbin/sshd","-D"]
             subprocess.run(["docker", "rm", "-f", name], capture_output=True, text=True)
             # Run container
             run = subprocess.run([
-                "docker", "run", "-d", "-p", f"{host_port}:22", "--name", name, image_tag
+                "docker", "run", "-d", "-p", f"127.0.0.1:{host_port}:22", "--name", name, image_tag
             ], capture_output=True, text=True)
             cid = (run.stdout or "").strip()
             if run.returncode != 0 or not cid:
                 raise RuntimeError(f"docker run failed: {run.stderr}")
             # Set password for labuser
-            # Pass the password on stdin so it is never interpreted by a shell
+            # Pass the password on stdin so it is never interpreted by a shell. Bytes, not
+            # text: in text mode Windows turns "\n" into "\r\n", which would make the carriage
+            # return part of the password and break every login.
             subprocess.run(["docker", "exec", "-i", cid, "chpasswd"],
-                           input=f"labuser:{password}\n", capture_output=True, text=True)
+                           input=f"labuser:{password}\n".encode(), capture_output=True, check=True)
             return cid, host_port
         except Exception as e:
             raise RuntimeError(f"launch_container error: {e}")
 
-    def start_relay_tunnel(host_port: int, relay_host: str, relay_port: int, ssh_username: str, password: str):
-        """Start reverse SSH tunnel: relay_port -> host_port (container's 22). Returns Popen or None.
-        Requires OpenSSH client available on PATH. Auth strategy may vary in real deployment.
-        """
-        try:
-            # Note: This assumes keyless or agent-based auth on relay for demo/testing purposes.
-            cmd = [
-                "ssh", "-N", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-                "-R", f"{relay_port}:127.0.0.1:{host_port}", f"{ssh_username}@{relay_host}"
-            ]
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return proc
-        except Exception:
-            return None
     def generate_password(*args, **kwargs):
         import secrets
         import string
@@ -224,7 +213,7 @@ class AgentGUI:
         self.root.configure(bg='#f0f0f0')
         
         # Configuration
-        self.api_base = "http://localhost:8000/api"
+        self.api_base = self._api_url()
         self.token = None
         self.refresh_token = None
         self.host_id = None
@@ -232,6 +221,7 @@ class AgentGUI:
         self.metrics_threads = {}
         self.log_queue = queue.Queue()
         self.is_agent_running = False
+        self.tunnel_proc = None  # cloudflared, which connects renters to this PC's containers
         self.prereq_ok = False
         
         # Create GUI
@@ -905,36 +895,41 @@ class AgentGUI:
             messagebox.showerror("Login Failed", f"Login failed: {str(e)}")
             self.progress_var.set("Login failed")
     
+    def _api(self, method, path, **kwargs):
+        """Call the API with the access token, refreshing it once if it has expired."""
+        kwargs.setdefault("timeout", 15)
+        for attempt in (1, 2):
+            headers = {"Authorization": f"Bearer {self.token}"}
+            response = requests.request(method, f"{self.api_base}{path}", headers=headers, **kwargs)
+            if response.status_code != 401 or attempt == 2 or not self.refresh_token:
+                return response
+            r = requests.post(f"{self.api_base}/auth/refresh/", json={"refresh": self.refresh_token}, timeout=15)
+            if r.status_code != 200:
+                return response
+            self.token, self.refresh_token = r.json()["access"], r.json()["refresh"]
+
     def _get_host_info(self):
         """Get host information for the logged-in user"""
         try:
-            headers = {"Authorization": f"Bearer {self.token}"}
-            response = requests.get(f"{self.api_base}/hosts/", headers=headers, timeout=15)
+            response = self._api("GET", "/auth/me/")
             response.raise_for_status()
-            
-            data = response.json()
-            # Our API returns the current host profile object (not a list)
-            if isinstance(data, dict) and data.get("id"):
-                self.host_id = data["id"]
+            me = response.json()
+            if me.get("role") == "HOST":
+                self.host_id = me["profile_id"]
                 self._log(f"[SUCCESS] Host ID: {self.host_id}")
-                # Load GPU info
                 self._load_gpu_info()
             else:
-                self._log("[WARNING] No host profile found for this user")
+                self._log("[WARNING] This is not a host account. Log in with the account you use to list GPUs.")
         except Exception as e:
             self._log(f"[ERROR] Failed to get host info: {str(e)}")
-    
+
     def _load_gpu_info(self):
         """Load GPU information"""
         try:
-            headers = {"Authorization": f"Bearer {self.token}"}
-            response = requests.get(f"{self.api_base}/gpus/", 
-                                  params={"host": self.host_id}, headers=headers)
+            response = self._api("GET", "/gpus/mine/")
             response.raise_for_status()
-            
-            gpus_data = response.json()
-            gpus = gpus_data.get("results", gpus_data)
-            
+            gpus = response.json()
+
             if gpus:
                 gpu = gpus[0]
                 gpu_info = f"GPU: {gpu['gpu_name']}\n"
@@ -1075,12 +1070,15 @@ class AgentGUI:
                 return None
             geo = get_geo_location()
             
-            # Map to backend serializer fields
+            vram = int(gpu_info.get("vram_gb") or 0)
+            if vram < 1:
+                vram = simpledialog.askinteger("GPU memory", "Couldn't read your GPU's memory. Enter its VRAM in GB:", minvalue=1, maxvalue=1024)
+                if not vram:
+                    return
             gpu_data = {
-                "host": self.host_id,
-                "gpu_name": gpu_info.get("name") or "Unknown GPU",
-                "gpu_model": gpu_info.get("name") or "Unknown",
-                "gpu_memory": int(gpu_info.get("vram_gb") or 0),
+                "gpu_name": (gpu_info.get("name") or "Unknown GPU")[:100],
+                "gpu_model": (gpu_info.get("name") or "Unknown")[:100],
+                "gpu_memory": vram,
                 "gpu_price": int(price),
                 "gpu_availability": True,
                 # Prefer human-readable place label; fallback to lat,lon; then hostname
@@ -1088,12 +1086,10 @@ class AgentGUI:
                     (geo.get('label') if geo and geo.get('label') else None)
                     or (f"{geo['lat']},{geo['lon']}" if geo and geo.get('lat') and geo.get('lon') else None)
                     or (sys_info.get("hostname") or "Unknown")
-                ),
+                )[:100],
             }
-            
-            headers = {"Authorization": f"Bearer {self.token}"}
-            response = requests.post(f"{self.api_base}/gpus/", 
-                                   json=gpu_data, headers=headers, timeout=20)
+
+            response = self._api("POST", "/gpus/", json=gpu_data, timeout=20)
             try:
                 response.raise_for_status()
             except Exception as http_err:
@@ -1145,20 +1141,15 @@ class AgentGUI:
         self._log("Stopping agent...")
         self.progress_var.set("Agent stopping...")
         
-        # Clean up active sessions
-        for session_id, (proc, cid) in self.active_sessions.items():
-            if proc:
-                proc.terminate()
-                self._log(f"Terminated tunnel for session {session_id}")
-        
-        self.active_sessions.clear()
-        
-        # Stop metrics threads
-        for session_id, (thread, stop_evt) in self.metrics_threads.items():
-            stop_evt.set()
-            thread.join(timeout=1)
-        
-        self.metrics_threads.clear()
+        self._stop_tunnel()
+        # Without the agent nobody can reach these containers, so end the sessions
+        # (which stops billing) before removing them.
+        for session_id in list(self.active_sessions):
+            try:
+                self._api("POST", f"/sessions/{session_id}/end_session/")
+            except Exception as e:
+                self._log(f"[ERROR] Couldn't end session {session_id}: {e}")
+            self._cleanup_session(session_id)
         
         self._log("[SUCCESS] Agent stopped")
         self.progress_var.set("Agent stopped")
@@ -1170,232 +1161,175 @@ class AgentGUI:
         while self.is_agent_running:
             try:
                 # Poll pending sessions assigned to this host
-                headers = {"Authorization": f"Bearer {self.token}"}
-                response = requests.get(f"{self.api_base}/sessions/pending_for_host/",
-                                      headers=headers, timeout=20)
+                response = self._api("GET", "/sessions/pending_for_host/", timeout=20)
                 response.raise_for_status()
-                
-                sessions_data = response.json()
-                if isinstance(sessions_data, list):
-                    sessions = sessions_data
-                else:
-                    sessions = sessions_data.get("results", sessions_data)
-                
-                # Process new sessions
+                sessions = response.json()
+
+                # Restart cloudflared if it died: running sessions depend on it too.
+                if not self._ensure_tunnel() and sessions:
+                    time.sleep(10)
+                    continue
                 for session in sessions:
-                    session_id = session["id"]
-                    if session_id not in self.active_sessions:
+                    if session["id"] not in self.active_sessions:
                         self._process_new_session(session)
                 
-                # Update session tree
                 self._update_session_tree(sessions)
-                
-                # Check for ended sessions
                 self._check_ended_sessions()
-                
-                time.sleep(5)  # Poll every 5 seconds
+                time.sleep(5)
                 
             except Exception as e:
                 self._log(f"[ERROR] Agent loop error: {str(e)}")
                 time.sleep(10)  # Wait longer on error
     
+    @staticmethod
+    def _api_url():
+        """LABHYA_API_URL, else the address baked in at build time, else a local API."""
+        if os.environ.get("LABHYA_API_URL"):
+            return os.environ["LABHYA_API_URL"].rstrip("/")
+        baked = os.path.join(getattr(sys, "_MEIPASS", ""), "api_url.txt")
+        if getattr(sys, "_MEIPASS", None) and os.path.exists(baked):
+            with open(baked, encoding="utf-8") as f:
+                return f.read().strip().rstrip("/")
+        return "http://localhost:8000/api"
+
+    @staticmethod
+    def _cloudflared_exe():
+        """cloudflared.exe bundled with the agent, or one on PATH when running from source."""
+        bundled = os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))), "cloudflared.exe")
+        if os.path.exists(bundled):
+            return bundled
+        import shutil
+        return shutil.which("cloudflared")
+
+    def _ensure_tunnel(self):
+        """Keep cloudflared running. Returns False if it can't be started right now."""
+        if self.tunnel_proc and self.tunnel_proc.poll() is None:
+            return True
+        exe = self._cloudflared_exe()
+        if not exe:
+            self._log("[ERROR] cloudflared.exe is missing. Reinstall the agent.")
+            return False
+        r = self._api("POST", "/hosts/tunnel/")
+        if not r.ok:
+            self._log(f"[ERROR] Couldn't get this PC's connection token: {r.text}")
+            return False
+        # The token goes in the environment, not the command line, so other programs can't read it.
+        self.tunnel_proc = subprocess.Popen(
+            [exe, "tunnel", "--no-autoupdate", "run"],
+            env={**os.environ, "TUNNEL_TOKEN": r.json()["token"]},
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        self._log("[SUCCESS] Connection to Cloudflare started")
+        return True
+
+    def _stop_tunnel(self):
+        if self.tunnel_proc and self.tunnel_proc.poll() is None:
+            self.tunnel_proc.terminate()
+        self.tunnel_proc = None
+
     def _process_new_session(self, session):
-        """Process a new session"""
+        """Start the container for a new session, then report it started (the API routes renters to it)."""
         session_id = session["id"]
         self._log(f"Processing new session: {session_id}")
         
         try:
-            # Build session image
-            image_template = session.get("image_template", "ml")
-            img_tag = build_session_image(str(session_id), image_template)
-            
-            # Launch container
+            img_tag = build_session_image(str(session_id), session.get("image_template", "ml"))
             host_port = self._get_free_port()
             password = generate_password()
-            cid, jupyter_port = launch_container(img_tag, host_port, password, str(session_id))
-            
-            # Start relay tunnel
-            relay_host = session.get("ssh_host")
-            relay_port = session.get("ssh_port")
-            ssh_username = session.get("ssh_username")
-            
-            proc = None
-            if relay_host and relay_port:
-                proc = start_relay_tunnel(host_port, relay_host, relay_port, ssh_username, password)
+            cid, _ = launch_container(img_tag, host_port, password, str(session_id))
+            # Track it now so _cleanup_session can remove it whatever happens next.
+            self.active_sessions[session_id] = (None, cid)
 
-            # Store session info
-            self.active_sessions[session_id] = (proc, cid)
-
-            # Require relay tunnel to be up; otherwise, mark error and clean up
-            tunnel_ok = proc is not None and getattr(proc, 'poll', lambda: None)() is None
-            if not tunnel_ok:
-                try:
-                    # Inform backend the connection failed
-                    headers = {"Authorization": f"Bearer {self.token}"}
-                    requests.post(f"{self.api_base}/sessions/{session_id}/update_connection_status/", json={
-                        "status": "ERROR",
-                        "error_message": "Reverse SSH tunnel failed to start"
-                    }, headers=headers, timeout=10)
-                except Exception:
-                    pass
-                # Stop container if tunnel can't be established
-                try:
-                    subprocess.run(["docker", "rm", "-f", cid], capture_output=True, text=True)
-                except Exception:
-                    pass
-                self._log(f"[ERROR] Tunnel failed for session {session_id}; container removed")
+            if not self._mark_session_started(session_id, password, host_port):
+                self._cleanup_session(session_id)
                 return
-
-            # Relay OK: publish relay details and mark started
-            self._mark_session_started(session_id, password)
-
-            # Start metrics thread
             self._start_metrics_thread(session_id)
-
             self._log(f"[SUCCESS] Session {session_id} ready")
                 
         except Exception as e:
             self._log(f"[ERROR] Failed to process session {session_id}: {str(e)}")
+            self._cleanup_session(session_id)
     
     def _get_free_port(self):
         """Get a free port for container"""
         return _choose_free_port()
-    
-    def _update_session_status(self, session_id, status, password=None):
-        """Update session status in backend"""
-        try:
-            headers = {"Authorization": f"Bearer {self.token}"}
-            data = {"connection_status": status}
-            if password:
-                data["ssh_password"] = password
-            
-            response = requests.patch(f"{self.api_base}/sessions/{session_id}/", 
-                                    json=data, headers=headers)
-            response.raise_for_status()
-            
-        except Exception as e:
-            self._log(f"[ERROR] Failed to update session status: {str(e)}")
 
-    def _mark_session_started(self, session_id, password=None, override_host=None, override_port=None, override_user=None):
-        """Call backend mark_started to set start_time and mark ACTIVE"""
+    def _mark_session_started(self, session_id, password, host_port):
+        """Tell the API the container is up (this starts billing). Returns False if refused."""
         try:
-            headers = {"Authorization": f"Bearer {self.token}"}
-            payload = {}
-            if password:
-                payload["ssh_password"] = password
-            if override_host:
-                payload["ssh_host"] = override_host
-            if override_port:
-                payload["ssh_port"] = override_port
-            if override_user:
-                payload["ssh_username"] = override_user
-            r = requests.post(f"{self.api_base}/sessions/{session_id}/mark_started/",
-                              json=payload, headers=headers, timeout=15)
+            r = self._api("POST", f"/sessions/{session_id}/mark_started/", json={"ssh_password": password, "host_port": host_port})
             r.raise_for_status()
+            return True
         except Exception as e:
             self._log(f"[ERROR] Failed to mark session started: {str(e)}")
-    
+            return False
+
+    @staticmethod
+    def _read_gpu_metrics():
+        """Real utilisation from nvidia-smi, or None if it can't be read."""
+        try:
+            out = subprocess.run(
+                ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=8,
+            ).stdout.strip().splitlines()[0]
+            util, used, total, temp = (float(x) for x in out.split(","))
+            return {"gpu_utilization": int(util), "memory_utilization": int(100 * used / total) if total else 0, "temperature": int(temp)}
+        except Exception:
+            return None
+
     def _start_metrics_thread(self, session_id):
-        """Start metrics reporting thread for session"""
+        """Report GPU metrics for a running session every 15 seconds."""
         stop_evt = threading.Event()
         
         def metrics_loop():
-            while not stop_evt.is_set():
+            while not stop_evt.wait(15):
+                metrics = self._read_gpu_metrics()
+                if metrics is None:
+                    continue  # nothing real to report
                 try:
-                    # Collect GPU metrics
-                    gpu_info = detect_gpu_info()
-                    
-                    # Update session metrics
-                    headers = {"Authorization": f"Bearer {self.token}"}
-                    metrics_data = {
-                        "gpu_utilization": 50,  # Placeholder
-                        "memory_utilization": 30,  # Placeholder
-                        "temperature": 60  # Placeholder
-                    }
-                    
-                    response = requests.post(f"{self.api_base}/sessions/{session_id}/update_gpu_metrics/", 
-                                           json=metrics_data, headers=headers)
-                    
-                    time.sleep(2)
-                    
+                    r = self._api("POST", f"/sessions/{session_id}/update_gpu_metrics/", json=metrics)
+                    if r.status_code in (404, 409):  # session ended or gone
+                        return
                 except Exception as e:
                     self._log(f"[ERROR] Metrics error for session {session_id}: {str(e)}")
-                    break
         
         thread = threading.Thread(target=metrics_loop, daemon=True)
         thread.start()
-        
         self.metrics_threads[session_id] = (thread, stop_evt)
     
     def _update_session_tree(self, sessions):
-        """Update session tree view"""
-        # Clear existing items
+        """Show the pending sessions in the list."""
         for item in self.session_tree.get_children():
             self.session_tree.delete(item)
-        
-        # Add sessions
         for session in sessions:
-            session_id = session["id"]
-            status = session.get("connection_status", "UNKNOWN")
-            # Handle both list serializer (flat fields) and detail serializer (nested objects)
-            gpu_field = session.get("gpu")
-            if isinstance(gpu_field, dict):
-                gpu_name = gpu_field.get("gpu_name", "Unknown")
-            else:
-                gpu_name = session.get("gpu_name", "Unknown")
-
-            renter_field = session.get("renter")
-            if isinstance(renter_field, dict):
-                renter_user = renter_field.get("user") or {}
-                if isinstance(renter_user, dict):
-                    renter_name = renter_user.get("first_name") or renter_user.get("username") or "Unknown"
-                else:
-                    renter_name = session.get("renter_name", "Unknown")
-            else:
-                renter_name = session.get("renter_name", "Unknown")
-            
-            self.session_tree.insert("", "end", text=session_id[:8], 
-                                   values=(status, gpu_name, renter_name))
+            self.session_tree.insert("", "end", text=session["id"][:8],
+                                     values=(session.get("connection_status", "UNKNOWN"),
+                                             session.get("gpu_name", "Unknown"),
+                                             session.get("renter_name", "Unknown")))
     
     def _check_ended_sessions(self):
-        """Check for ended sessions and clean up"""
-        try:
-            headers = {"Authorization": f"Bearer {self.token}"}
-            response = requests.get(f"{self.api_base}/sessions/", 
-                                  params={"host": self.host_id, "status": "COMPLETED"}, 
-                                  headers=headers)
-            response.raise_for_status()
-            
-            sessions_data = response.json()
-            sessions = sessions_data.get("results", sessions_data)
-            
-            for session in sessions:
-                session_id = session["id"]
-                if session_id in self.active_sessions:
+        """Remove the container and tunnel of every local session that has ended on the server."""
+        for session_id in list(self.active_sessions):
+            try:
+                r = self._api("GET", f"/sessions/{session_id}/")
+                if r.status_code == 404 or (r.ok and r.json().get("status") not in ("PENDING", "ACTIVE")):
                     self._cleanup_session(session_id)
-                    
-        except Exception as e:
-            self._log(f"[ERROR] Failed to check ended sessions: {str(e)}")
+            except Exception as e:
+                self._log(f"[ERROR] Failed to check session {session_id}: {str(e)}")
     
     def _cleanup_session(self, session_id):
-        """Clean up a session"""
-        if session_id in self.active_sessions:
-            proc, cid = self.active_sessions.pop(session_id)
-            
-            if proc:
-                proc.terminate()
-                self._log(f"Terminated tunnel for session {session_id}")
-            
-            if cid:
-                subprocess.run(["docker", "rm", "-f", cid])
-                self._log(f"Removed container for session {session_id}")
-        
-        # Stop metrics thread
+        """Stop the tunnel, metrics and container for a session."""
+        proc, cid = self.active_sessions.pop(session_id, (None, None))
+        if proc and proc.poll() is None:
+            proc.terminate()
+            self._log(f"Terminated tunnel for session {session_id}")
+        if cid:
+            subprocess.run(["docker", "rm", "-f", cid], capture_output=True, text=True)
+            self._log(f"Removed container for session {session_id}")
         if session_id in self.metrics_threads:
             thread, stop_evt = self.metrics_threads.pop(session_id)
             stop_evt.set()
-            thread.join(timeout=1)
-        
         self._log(f"[SUCCESS] Cleaned up session {session_id}")
     
     def _clear_logs(self):

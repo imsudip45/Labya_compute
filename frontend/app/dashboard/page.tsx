@@ -1,274 +1,106 @@
 "use client"
 
-import { useEffect } from "react"
-import { DashboardLayout } from "@/components/layout/dashboard-layout"
-import { ProtectedRoute } from "@/components/auth/protected-route"
-import { StatsCard } from "@/components/dashboard/stats-card"
-import { GPUCard } from "@/components/dashboard/gpu-card"
-import { RecentSessions } from "@/components/dashboard/recent-sessions"
+import Link from "next/link"
+import { Download } from "lucide-react"
+import { AppShell } from "@/components/app/shell"
+import { SessionCard } from "@/components/app/session-card"
+import { Empty, LoadError, PageHeader, Section, Skeleton, Stats, rs } from "@/components/app/ui"
 import { Button } from "@/components/ui/button"
+import { api } from "@/lib/api"
 import { useAuthStore } from "@/lib/auth-store"
-import { useAppStore } from "@/lib/app-store"
-import { Cpu, Activity, DollarSign, Wallet, Plus, Store, CreditCard } from "lucide-react"
-import { AvailableGPUCard } from "@/components/dashboard/available-gpu-card"
-import { ActiveSessionCard } from "@/components/dashboard/active-session-card"
-import { LabhyaAgentDialog } from "@/components/dialogs/labhya-agent-dialog"
+import { useLoad } from "@/lib/use-load"
 
-export default function DashboardPage() {
-  const { role } = useAuthStore()
-  const {
-    gpus,
-    sessions,
-    wallet,
-    dashboardStats,
-    loading,
-    error,
-    fetchGPUs,
-    fetchSessions,
-    fetchWallet,
-    fetchDashboardStats,
-  } = useAppStore()
+const load = () => Promise.all([api.getDashboardStats(), api.getWallet(), api.getSessions()])
 
-  useEffect(() => {
-    const loadDashboardData = async () => {
-      try {
-        await Promise.all([fetchGPUs(), fetchSessions(), fetchWallet(), fetchDashboardStats()])
-      } catch (error) {
-        console.error("Failed to load dashboard data:", error)
-      }
-    }
-
-    loadDashboardData()
-  }, [role, fetchGPUs, fetchSessions, fetchWallet, fetchDashboardStats])
-
-  if (loading) {
-    return (
-      <ProtectedRoute>
-        <DashboardLayout>
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-              <p className="mt-2 text-muted-foreground">Loading dashboard...</p>
-            </div>
-          </div>
-        </DashboardLayout>
-      </ProtectedRoute>
-    )
-  }
-
-  if (error) {
-    return (
-      <ProtectedRoute>
-        <DashboardLayout>
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <p className="text-destructive mb-2">Error loading dashboard</p>
-              <p className="text-sm text-muted-foreground">{error}</p>
-            </div>
-          </div>
-        </DashboardLayout>
-      </ProtectedRoute>
-    )
-  }
-
-  if (role === "HOST") {
-    return (
-      <ProtectedRoute requiredRole="HOST">
-        <DashboardLayout>
-          <div className="space-y-6">
-            {/* Welcome Section */}
-            <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-3xl font-bold">Host Dashboard</h1>
-                <p className="text-muted-foreground">Manage your GPU resources and monitor earnings</p>
-              </div>
-              <LabhyaAgentDialog>
-                <Button>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add GPU
-                </Button>
-              </LabhyaAgentDialog>
-            </div>
-
-            {/* Stats Cards */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <StatsCard
-                title="Total GPUs"
-                value={dashboardStats?.totalGPUs || 0}
-                description={`${(gpus || []).filter((g) => g.gpu_availability).length} available`}
-                icon={Cpu}
-              />
-              <StatsCard
-                title="Active Sessions"
-                value={dashboardStats?.activeSessions || 0}
-                description="Currently running"
-                icon={Activity}
-              />
-              <StatsCard
-                title="Today's Earnings"
-                value={`Rs.${dashboardStats?.todaysEarnings?.toLocaleString() || "0"}`}
-                description="Revenue today"
-                icon={DollarSign}
-                trend={{ value: 12.5, isPositive: true }}
-              />
-              <StatsCard
-                title="Wallet Balance"
-                value={`Rs.${wallet?.balance?.toLocaleString() || "0"}`}
-                description="Available funds"
-                icon={Wallet}
-              />
-            </div>
-
-            {/* Main Content Grid */}
-            <div className="grid gap-6 lg:grid-cols-3">
-              {/* My GPUs Section */}
-              <div className="lg:col-span-2 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-xl font-semibold">My GPUs</h2>
-                  <Button variant="outline" size="sm">
-                    View All
-                  </Button>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  {(gpus || []).slice(0, 4).map((gpu) => (
-                    <GPUCard
-                      key={gpu.id}
-                      gpu={gpu}
-                      onEdit={(gpu) => console.log("Edit GPU:", gpu)}
-                      onDelete={(gpu) => console.log("Delete GPU:", gpu)}
-                      onToggleAvailability={(gpu) => console.log("Toggle availability:", gpu)}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* Recent Sessions */}
-              <div>
-                <RecentSessions sessions={sessions} onViewAll={() => console.log("View all sessions")} />
-              </div>
-            </div>
-          </div>
-        </DashboardLayout>
-      </ProtectedRoute>
-    )
-  }
-
-  if (role === "RENTER") {
-    return (
-      <ProtectedRoute requiredRole="RENTER">
-        <DashboardLayout>
-          <div className="space-y-6">
-            {/* Welcome Section */}
-            <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-3xl font-bold">Renter Dashboard</h1>
-                <p className="text-muted-foreground">Browse and rent GPU computing power</p>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline">
-                  <CreditCard className="mr-2 h-4 w-4" />
-                  Add Funds
-                </Button>
-                <Button>
-                  <Store className="mr-2 h-4 w-4" />
-                  Browse GPUs
-                </Button>
-              </div>
-            </div>
-
-            {/* Stats Cards */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <StatsCard
-                title="Active Sessions"
-                value={(sessions || []).filter((s) => s.status === "ACTIVE").length}
-                description="Currently running"
-                icon={Activity}
-              />
-              <StatsCard
-                title="Total Sessions"
-                value={dashboardStats?.totalSessions || (sessions || []).length}
-                description="All time"
-                icon={Cpu}
-              />
-              <StatsCard
-                title="Total Spent"
-                value={`Rs.${dashboardStats?.totalSpent?.toLocaleString() || "0"}`}
-                description="All time spending"
-                icon={DollarSign}
-              />
-              <StatsCard
-                title="Wallet Balance"
-                value={`Rs.${wallet?.balance?.toLocaleString() || "0"}`}
-                description="Available funds"
-                icon={Wallet}
-              />
-            </div>
-
-            {/* Main Content Grid */}
-            <div className="grid gap-6 lg:grid-cols-3">
-              {/* Available GPUs Section */}
-              <div className="lg:col-span-2 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-xl font-semibold">Available GPUs</h2>
-                  <Button variant="outline" size="sm">
-                    View All
-                  </Button>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  {(gpus || [])
-                    .filter((gpu) => gpu.gpu_availability)
-                    .slice(0, 4)
-                    .map((gpu) => (
-                      <AvailableGPUCard
-                        key={gpu.id}
-                        gpu={gpu}
-                        onRent={(gpu) => {
-                          // The RentGPUDialog component handles the rental process
-                        }}
-                      />
-                    ))}
-                </div>
-              </div>
-
-              {/* Active Sessions */}
-              <div className="space-y-4">
-                <h2 className="text-xl font-semibold">My Sessions</h2>
-                {(sessions || []).filter((session) => session.status === "ACTIVE").length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <Activity className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                    <p>No active sessions</p>
-                    <p className="text-sm">Rent a GPU to get started</p>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {(sessions || [])
-                      .filter((session) => session.status === "ACTIVE")
-                      .map((session) => (
-                        <ActiveSessionCard
-                          key={session.id}
-                          session={session}
-                          onEndSession={(session) => console.log("End session:", session)}
-                        />
-                      ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </DashboardLayout>
-      </ProtectedRoute>
-    )
-  }
-
-  // Placeholder for other roles (will be built in future tasks)
+export default function OverviewPage() {
   return (
-    <ProtectedRoute>
-      <DashboardLayout>
-        <div className="text-center py-12">
-          <h1 className="text-2xl font-bold mb-4">Dashboard</h1>
-          <p className="text-muted-foreground">Coming soon...</p>
-        </div>
-      </DashboardLayout>
-    </ProtectedRoute>
+    <AppShell>
+      <Overview />
+    </AppShell>
+  )
+}
+
+function Overview() {
+  const role = useAuthStore((s) => s.role)!
+  const { data, error, loading, reload } = useLoad(load, 10_000)
+  const host = role === "HOST"
+
+  const header = (
+    <PageHeader
+      title="Overview"
+      action={
+        host ? (
+          <Button variant="outline" asChild><Link href="/gpus">Manage GPUs</Link></Button>
+        ) : (
+          <Button asChild><Link href="/marketplace">Rent a GPU</Link></Button>
+        )
+      }
+    />
+  )
+
+  if (loading) return <>{header}<Skeleton rows={2} /></>
+  if (!data) return <>{header}<LoadError message={error ?? ""} onRetry={reload} /></>
+
+  const [stats, wallet, sessions] = data
+  const live = sessions.filter((s) => s.status === "ACTIVE" || s.status === "PENDING")
+  const balance = Number(wallet.balance)
+
+  return (
+    <>
+      {header}
+      {error && <div className="mb-6"><LoadError message={error} onRetry={reload} /></div>}
+
+      <Stats
+        items={
+          host
+            ? [
+                { label: "Wallet balance", value: rs(balance) },
+                { label: "Earned today", value: rs(stats.todaysEarnings) },
+                { label: "GPUs available to rent", value: `${stats.availableGPUs ?? 0} of ${stats.totalGPUs ?? 0}` },
+                { label: "Sessions running", value: stats.activeSessions ?? 0 },
+              ]
+            : [
+                { label: "Wallet balance", value: rs(balance) },
+                { label: "Sessions running", value: stats.activeSessions ?? 0 },
+                { label: "Sessions so far", value: stats.totalSessions ?? 0 },
+                { label: "Total spent", value: rs(stats.totalSpent) },
+              ]
+        }
+      />
+
+      {!host && balance <= 0 && (
+        <p className="mt-4 text-body-sm text-ash">
+          Your wallet is empty. <Link href="/wallet" className="text-whiteout underline decoration-graphite-light underline-offset-4 hover:decoration-whiteout">Add funds</Link> before you rent a GPU.
+        </p>
+      )}
+
+      {host && (stats.totalGPUs ?? 0) === 0 && (
+        <Section title="List your first GPU">
+          <Empty
+            title="You haven't listed a GPU yet"
+            body="Install the desktop agent on the PC with your GPU and log in with this account. The agent detects your GPU and lists it here."
+            action={
+              <Button asChild>
+                <a href="/downloads/LabhyaComputeAgentSetup.exe" download><Download aria-hidden /> Download agent for Windows</a>
+              </Button>
+            }
+          />
+        </Section>
+      )}
+
+      <Section title={host ? "Sessions on your GPUs" : "Your running sessions"} action={sessions.length > 0 && <Link href="/sessions" className="text-body-sm text-ash hover:text-whiteout">All sessions</Link>}>
+        {live.length === 0 ? (
+          <Empty
+            title="Nothing running right now"
+            body={host ? "When someone rents one of your GPUs, the session shows up here." : "Rent a GPU and its SSH details will show up here."}
+            action={!host && <Button variant="outline" asChild><Link href="/marketplace">Browse GPUs</Link></Button>}
+          />
+        ) : (
+          <div className="space-y-4">
+            {live.map((s) => <SessionCard key={s.id} session={s} role={role} onChange={reload} />)}
+          </div>
+        )}
+      </Section>
+    </>
   )
 }

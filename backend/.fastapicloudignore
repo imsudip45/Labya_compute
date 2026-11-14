@@ -1,0 +1,13 @@
+# Only the API is deployed to FastAPI Cloud. The host agent runs on hosts' PCs.
+agent/
+tests/
+seed_dev.py
+Dockerfile
+.dockerignore
+.venv/
+.pytest_cache/
+*.db
+.env
+
+# The web app build is gitignored but must be uploaded.
+!static/

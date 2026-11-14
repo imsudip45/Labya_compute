@@ -1,29 +1,25 @@
-# Use official lightweight Python image
 FROM python:3.11-slim
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
 
-# Set work directory
+COPY --from=ghcr.io/astral-sh/uv:0.10.8 /uv /usr/local/bin/uv
 WORKDIR /app
 
-# Install system dependencies (build-essential, libpq-dev for PostgreSQL, etc.)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Exact versions from uv.lock. Dependencies first, so code changes don't reinstall them.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
-# Install Python dependencies
-COPY requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
+COPY app ./app
+COPY migrations ./migrations
+COPY alembic.ini ./
 
-# Copy project files
-COPY . /app/
+RUN useradd --create-home --uid 10001 api
+USER api
 
-# Expose port
 EXPOSE 8000
-
-# Run entrypoint script or direct command
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# The app applies database migrations when it starts.
+CMD ["fastapi", "run", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]

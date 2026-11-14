@@ -1,77 +1,81 @@
-from datetime import datetime, timedelta
-from typing import Optional
+"""Password hashing, JWTs, and the dependencies that resolve the current user."""
+import uuid
+from datetime import timedelta
+from typing import Literal, Optional
+
+import bcrypt
+import jwt
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
-from passlib.context import CryptContext
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlmodel import Session, select
+
 from app.config import settings
 from app.db import get_session
-from app.models import User, Renter, Host
+from app.models import Host, Renter, User, utcnow
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login/", auto_error=False)
+ALGORITHM = "HS256"
+_bearer = HTTPBearer(auto_error=False)
+# Compared against when the email is unknown, so a failed login takes the same time either way.
+_DUMMY_HASH = bcrypt.hashpw(b"timing-equaliser", bcrypt.gensalt()).decode()
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
 
-def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
-    to_encode.update({"exp": expire, "type": "access"})
-    return jwt.encode(to_encode, settings.secret_key, algorithm=settings.jwt_algorithm)
 
-def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
-    to_encode.update({"exp": expire, "type": "refresh"})
-    return jwt.encode(to_encode, settings.secret_key, algorithm=settings.jwt_algorithm)
-
-def get_current_user(token: Optional[str] = Depends(oauth2_scheme), db: Session = Depends(get_session)) -> User:
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    if not token:
-        # Fallback: check Authorization header manually if OAuth2PasswordBearer failed
-        raise credentials_exception
+def verify_password(password: str, hashed: Optional[str]) -> bool:
     try:
-        # Support both 'Bearer <token>' and raw token if header extraction was manual
-        if token.startswith("Bearer "):
-            token = token.split(" ")[1]
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.jwt_algorithm])
-        email: str = payload.get("sub")
-        if email is None or payload.get("type") == "refresh":
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
-        
-    statement = select(User).where(User.email == email)
-    user = db.exec(statement).first()
-    if user is None:
-        raise credentials_exception
+        return bcrypt.checkpw(password.encode(), (hashed or _DUMMY_HASH).encode()) and hashed is not None
+    except ValueError:
+        return False
+
+
+def _token(user: User, kind: Literal["access", "refresh"], lifetime: timedelta) -> str:
+    now = utcnow()
+    claims = {"sub": str(user.id), "type": kind, "ver": user.token_version, "iat": now, "exp": now + lifetime}
+    return jwt.encode(claims, settings.secret_key, algorithm=ALGORITHM)
+
+
+def issue_tokens(user: User) -> dict:
+    return {
+        "access": _token(user, "access", timedelta(minutes=settings.access_token_expire_minutes)),
+        "refresh": _token(user, "refresh", timedelta(days=settings.refresh_token_expire_days)),
+    }
+
+
+def user_from_token(token: str, kind: Literal["access", "refresh"], db: Session) -> User:
+    """Decode a token of the given kind and return its still-valid user, or raise 401."""
+    denied = HTTPException(status.HTTP_401_UNAUTHORIZED, "Your login has expired. Log in again.", {"WWW-Authenticate": "Bearer"})
+    try:
+        claims = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM], options={"require": ["exp", "sub", "type"]})
+        user_id = uuid.UUID(claims["sub"])
+    except (jwt.PyJWTError, ValueError):
+        raise denied
+    if claims["type"] != kind:
+        raise denied
+    user = db.get(User, user_id)
+    if not user or claims.get("ver") != user.token_version:
+        raise denied
     return user
 
+
+def get_current_user(
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer), db: Session = Depends(get_session)
+) -> User:
+    if not creds:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Log in to continue.", {"WWW-Authenticate": "Bearer"})
+    return user_from_token(creds.credentials, "access", db)
+
+
 def get_current_renter(user: User = Depends(get_current_user), db: Session = Depends(get_session)) -> Renter:
-    statement = select(Renter).where(Renter.user_id == user.id)
-    renter = db.exec(statement).first()
+    renter = db.exec(select(Renter).where(Renter.user_id == user.id)).first()
     if not renter:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Renter role required")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only renter accounts can do this.")
     return renter
 
+
 def get_current_host(user: User = Depends(get_current_user), db: Session = Depends(get_session)) -> Host:
-    statement = select(Host).where(Host.user_id == user.id)
-    host = db.exec(statement).first()
+    host = db.exec(select(Host).where(Host.user_id == user.id)).first()
     if not host:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Host role required")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only host accounts can do this.")
     return host

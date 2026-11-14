@@ -6,7 +6,8 @@
     "build": "next build",
     "dev": "next dev",
     "lint": "next lint",
-    "start": "next start"
+    "start": "next start",
+    "build:api": "next build && node -e \"const fs=require('fs');fs.rmSync('../backend/static',{recursive:true,force:true});fs.cpSync('out','../backend/static',{recursive:true})\""
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

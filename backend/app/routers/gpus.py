@@ -1,92 +1,81 @@
-from typing import List
 import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
+
+from app.auth_utils import get_current_host
 from app.db import get_session
-from app.models import GPU, Host, User
-from app.schemas import GPUCreate, GPUResponse
-from app.auth_utils import get_current_user, get_current_host
+from app.models import GPU, OPEN_STATUSES, Host, Session as RentalSession, User
+from app.schemas import GPUCreate, GPUResponse, GPUUpdate
 
 router = APIRouter(prefix="/api/gpus", tags=["GPUs"])
 
-def make_gpu_response(gpu: GPU, db: Session) -> GPUResponse:
-    stmt = select(Host).where(Host.id == gpu.host_id)
-    host = db.exec(stmt).first()
-    stmt_user = select(User).where(User.id == host.user_id)
-    user = db.exec(stmt_user).first()
-    host_name = user.first_name + " " + user.last_name if user.last_name else user.first_name
-    if not host_name.strip():
-        host_name = user.email
-    return GPUResponse(
-        id=gpu.id,
-        host_id=gpu.host_id,
-        host_name=host_name,
-        gpu_name=gpu.gpu_name,
-        gpu_model=gpu.gpu_model,
-        gpu_memory=gpu.gpu_memory,
-        gpu_price=gpu.gpu_price,
-        gpu_availability=gpu.gpu_availability,
-        gpu_location=gpu.gpu_location,
-        created_at=gpu.created_at,
-        updated_at=gpu.updated_at
-    )
 
-@router.get("/available/", response_model=List[GPUResponse])
-def get_available_gpus(db: Session = Depends(get_session)):
-    stmt = select(GPU).where(GPU.gpu_availability == True)
-    gpus = db.exec(stmt).all()
-    return [make_gpu_response(gpu, db) for gpu in gpus]
+def _rented_ids(db: Session, gpu_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+    if not gpu_ids:
+        return set()
+    rows = db.exec(select(RentalSession.gpu_id).where(RentalSession.gpu_id.in_(gpu_ids), RentalSession.status.in_(OPEN_STATUSES)))
+    return set(rows.all())
 
-@router.get("/", response_model=List[GPUResponse])
-def get_all_gpus(db: Session = Depends(get_session)):
-    stmt = select(GPU)
-    gpus = db.exec(stmt).all()
-    return [make_gpu_response(gpu, db) for gpu in gpus]
+
+def _out(db: Session, gpus: list[GPU]) -> list[GPUResponse]:
+    rented = _rented_ids(db, [g.id for g in gpus])
+    names = {
+        h.id: u.display_name
+        for h, u in db.exec(select(Host, User).join(User, User.id == Host.user_id).where(Host.id.in_({g.host_id for g in gpus}))).all()
+    } if gpus else {}
+    return [GPUResponse(**g.model_dump(), host_name=names[g.host_id], is_rented=g.id in rented) for g in gpus]
+
+
+def _own_gpu(gpu_id: uuid.UUID, host: Host, db: Session) -> GPU:
+    gpu = db.get(GPU, gpu_id)
+    if not gpu or gpu.host_id != host.id:  # same answer for "missing" and "not yours"
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "GPU not found")
+    return gpu
+
+
+@router.get("/available/", response_model=list[GPUResponse])
+def available_gpus(db: Session = Depends(get_session)):
+    """Public: GPUs listed for rent and not rented right now."""
+    listed = db.exec(select(GPU).where(GPU.gpu_availability == True).order_by(GPU.gpu_price)).all()  # noqa: E712
+    return [g for g in _out(db, list(listed)) if not g.is_rented]
+
+
+@router.get("/mine/", response_model=list[GPUResponse])
+def my_gpus(host: Host = Depends(get_current_host), db: Session = Depends(get_session)):
+    return _out(db, list(db.exec(select(GPU).where(GPU.host_id == host.id).order_by(GPU.created_at)).all()))
+
 
 @router.post("/", response_model=GPUResponse, status_code=status.HTTP_201_CREATED)
 def create_gpu(payload: GPUCreate, host: Host = Depends(get_current_host), db: Session = Depends(get_session)):
-    gpu = GPU(
-        host_id=host.id,
-        gpu_name=payload.gpu_name,
-        gpu_model=payload.gpu_model,
-        gpu_memory=payload.gpu_memory,
-        gpu_price=payload.gpu_price,
-        gpu_availability=payload.gpu_availability,
-        gpu_location=payload.gpu_location
-    )
+    gpu = GPU(host_id=host.id, **payload.model_dump())
     db.add(gpu)
     db.commit()
     db.refresh(gpu)
-    return make_gpu_response(gpu, db)
+    return _out(db, [gpu])[0]
 
-@router.get("/{gpu_id}/", response_model=GPUResponse)
-def get_gpu(gpu_id: uuid.UUID, db: Session = Depends(get_session)):
-    gpu = db.get(GPU, gpu_id)
-    if not gpu:
-        raise HTTPException(status_code=404, detail="GPU not found")
-    return make_gpu_response(gpu, db)
 
 @router.patch("/{gpu_id}/", response_model=GPUResponse)
-def update_gpu(gpu_id: uuid.UUID, payload: GPUCreate, host: Host = Depends(get_current_host), db: Session = Depends(get_session)):
-    gpu = db.get(GPU, gpu_id)
-    if not gpu:
-        raise HTTPException(status_code=404, detail="GPU not found")
-    if gpu.host_id != host.id:
-        raise HTTPException(status_code=403, detail="Not authorized to edit this GPU")
-        
-    for key, val in payload.dict(exclude_unset=True).items():
+def update_gpu(gpu_id: uuid.UUID, payload: GPUUpdate, host: Host = Depends(get_current_host), db: Session = Depends(get_session)):
+    gpu = _own_gpu(gpu_id, host, db)
+    for key, val in payload.model_dump(exclude_unset=True).items():
+        if val is None and key != "gpu_model":
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"{key} can't be empty")
         setattr(gpu, key, val)
     db.add(gpu)
     db.commit()
     db.refresh(gpu)
-    return make_gpu_response(gpu, db)
+    return _out(db, [gpu])[0]
+
 
 @router.delete("/{gpu_id}/", status_code=status.HTTP_204_NO_CONTENT)
 def delete_gpu(gpu_id: uuid.UUID, host: Host = Depends(get_current_host), db: Session = Depends(get_session)):
-    gpu = db.get(GPU, gpu_id)
-    if not gpu:
-        raise HTTPException(status_code=404, detail="GPU not found")
-    if gpu.host_id != host.id:
-        raise HTTPException(status_code=403, detail="Not authorized to delete this GPU")
+    gpu = _own_gpu(gpu_id, host, db)
+    # Sessions reference the GPU for billing history, so it can't be deleted once rented.
+    if db.exec(select(RentalSession.id).where(RentalSession.gpu_id == gpu.id)).first():
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            'This GPU has session history, so it can\'t be removed. Turn off "Available to rent" instead.',
+        )
     db.delete(gpu)
     db.commit()

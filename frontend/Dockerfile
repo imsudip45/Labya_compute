@@ -13,22 +13,10 @@ RUN npm ci
 
 # Copy source and build
 COPY . .
-# Type checking is disabled during build via next.config.mjs if errors exist, 
-# which prevents unexpected CI build breakages.
 RUN npm run build
 
-# Stage 2: Serve Next.js
-FROM node:18-alpine AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-
-# Copy built app and required assets
-COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/next.config.mjs ./next.config.mjs
-
-EXPOSE 3000
-
-CMD ["npm", "start"]
+# Stage 2: serve the static export (next.config.mjs sets output: "export")
+FROM nginx:1.27-alpine
+COPY --from=builder /app/out /usr/share/nginx/html
+# trailingSlash: true makes every page a directory with index.html, which nginx serves as is.
+EXPOSE 80

@@ -5,7 +5,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/run/sshd
 # Create user
-RUN useradd -m -s /bin/bash labuser && echo 'labuser:changeme' | chpasswd && adduser labuser sudo
+# No password until the agent sets the session's own one (an unset password can't log in).
+RUN useradd -m -s /bin/bash labuser && adduser labuser sudo
 # Enable password auth
 RUN sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config \
     && sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config

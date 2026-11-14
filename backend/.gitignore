@@ -20,3 +20,15 @@ staticfiles/
 .vscode/
 .idea/
 *.log
+# Local env and databases
+.env
+*.db
+.pytest_cache/
+*.egg-info/
+build/
+
+# Web app build (frontend: pnpm build:api)
+static/
+
+# Cloudflare CLI cache
+.cloudflare/
